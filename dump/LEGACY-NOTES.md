@@ -16,6 +16,11 @@ bureaucracy (team A/B claim tables, ask-first rules for every doc edit) is dropp
 
 ## 1. Gnani API facts that were verified live (2026-11-06)
 
+**Caveat:** every "verified" result in these notes came from the old **browser rooms** (two phone browsers over mobile
+data, microphone audio recorded as WAV at browser sample rates), **not cellular calls**. The new product runs on normal
+cellular calls with 8 kHz telephone audio, so latency, transcription quality and the upload bug must be re-tested on
+that path. The API shapes (endpoints, headers, fields) still hold.
+
 These are the most valuable items. They cost a debugging day.
 
 | Fact | Detail |

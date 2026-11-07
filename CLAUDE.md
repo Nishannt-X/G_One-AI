@@ -62,15 +62,35 @@ GitHub issues are the source of truth for work. Every agent session works **exac
 2. Assign the issue to your human (or comment "claimed by <agent> for @<human>") **before** coding.
 3. Work in your own worktree on a branch from fresh `origin/main`: `<type>/<issue#>-<slug>`, for example
    `feat/12-media-stream-handler`. Types: `feat`, `fix`, `chore`, `docs`, `test`.
-4. **Stay inside the issue's "Owns" paths.** Each issue lists the files or folders it may change. Touching anything
-   else, especially `core/`, `pom.xml`, `application.yml`, `web/package.json`, `.env.example` or this file, needs a
-   comment on the issue first. Shared contracts change only through a dedicated issue.
+4. **Stay inside the issue's "Owns" paths.** Each issue lists the files or folders it may change. If you need another
+   path, stop and ask on the issue; a human (or the issue's update) widens "Owns" before you touch it. Shared files
+   (`core/`, `pom.xml`, `application.yml`, `web/package.json`, `.env.example`, this file) change only through an issue
+   that names them.
 5. Code against interfaces in `core/` and the fakes, not against another area's half-built code.
 6. Before the PR: rebase on `origin/main`, run the checks above, and fill in the PR template (what changed, exact
    commands and results, what is not verified).
-7. Open a PR with `Closes #<n>`. Small PRs (aim under 400 changed lines). Conventional Commit messages. Humans merge
-   (squash). Agents never merge, force-push shared branches or push to `main`.
-8. If you find overlap with another open PR or branch, stop and comment on both issues.
+7. Open a PR with `Closes #<n>`. Small PRs (aim under 400 changed lines). Conventional Commit messages.
+8. **Automated review, then the agent merges.** Agents in this repo may merge their own PRs when every step holds:
+   1. **Review.** The author agent launches a separate reviewer agent from a **different model family** (author Claude
+      → Codex reviewer, e.g. GPT-6.1 Sol or Terra at high effort; author Codex → Claude Opus) on the final diff, and
+      posts its output unaltered as a PR comment that starts with `Automated review:` and contains the author model, the
+      reviewer model, the full reviewed commit SHA, findings with file and line, and a last line `Verdict: APPROVE` or
+      `Verdict: CHANGES`. If independence cannot be established, a human decides. Only exemption: a PR whose diff touches
+      nothing but prose in `docs/` (not `docs/adr/`) or `README.md`; it says "docs-only, no review" in the PR template,
+      skips steps 2 and the verdict part of step 3, and merges with the current head SHA in step 4.
+   2. **Fix.** Every finding is fixed or answered in the PR. Each new push to a reviewed PR needs a new review. At most three rounds,
+      then a human decides.
+   3. **Check before merging.** Read the PR comments (`gh pr view <n> --json comments,headRefOid`); the controlling
+      verdict is the latest `Automated review:` comment, its SHA must equal the current head, and a later `CHANGES`
+      blocks the merge. CI is green, the branch is current with `main`, there are no conflicts, the final diff stays
+      inside the issue's "Owns" paths, and no open PR overlaps it.
+   4. **Merge** with `gh pr merge <n> --squash --delete-branch --match-head-commit <sha>`, where `<sha>` is the reviewed
+      head (or the current head for a docs-only PR). Never merge red CI,
+      push to `main`, force-push a shared branch or bypass branch protection.
+   5. **A human merges** any PR (including mixed ones) that changes agent instructions (`CLAUDE.md`, `AGENTS.md`,
+      `orchestration.md`, `.claude/**`, `.agents/**`), `.github/**`, dependencies (`backend/pom.xml` dependencies,
+      `package.json` dependencies, lockfiles) or `docs/adr/`.
+9. If you find overlap with another open PR or branch, stop and comment on both issues.
 
 New decisions go in `docs/adr/NNNN-title.md` in the same PR that makes them. Tick `ROADMAP.md` items when a phase
 item merges.
