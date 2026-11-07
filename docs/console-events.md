@@ -228,7 +228,8 @@ The assistant called a tool.
 ### memory_loaded
 
 Memory was loaded at the start of the farmer leg. `returning` is true when anything was remembered; for a first-time
-caller `facts` and `gists` are empty arrays. `gists` are newest first.
+caller `facts` and `gists` are empty arrays. `gists` are newest call first (by `startedMs`). Not sent when the caller ID
+is withheld: no memory is loaded or saved for that call.
 
 | Field | JSON type | Meaning |
 | --- | --- | --- |

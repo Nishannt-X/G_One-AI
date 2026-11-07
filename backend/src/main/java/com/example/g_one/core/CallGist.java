@@ -5,7 +5,8 @@ import java.util.Objects;
 
 /**
  * The short summary written at the end of a call: what was asked and what happened ({@code summary}), plus open
- * follow-ups. Times are epoch milliseconds. The exact wording rules come from the memory decision (#9).
+ * follow-ups. Times are epoch milliseconds; {@code startedMs} orders a farmer's gists (newest call first). The exact
+ * wording rules come from the memory decision (#9).
  */
 public record CallGist(CallId callId, long startedMs, long endedMs, String summary, List<String> followUps) {
 

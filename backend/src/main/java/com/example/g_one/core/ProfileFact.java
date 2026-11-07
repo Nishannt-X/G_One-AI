@@ -4,7 +4,8 @@ import java.util.Objects;
 
 /**
  * One stable fact in a farmer profile, such as {@code field = "district"}, {@code value = "Nashik"}. A profile holds at
- * most one fact per field; a newer fact for the same field replaces the older one.
+ * most one fact per field. Which fact wins a field is set by {@link MemoryStore#upsertFacts}: said beats inferred,
+ * then the newer one wins.
  */
 public record ProfileFact(String field, String value, Provenance provenance) {
 

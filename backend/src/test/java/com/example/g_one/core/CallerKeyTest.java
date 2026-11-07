@@ -11,8 +11,9 @@ class CallerKeyTest {
     // Twilio's documented magic test numbers: synthetic, never a real person.
     private static final String NUMBER = "+15005550006";
     private static final String OTHER_NUMBER = "+15005550001";
-    private static final byte[] SALT = "salt-one-not-a-secret".getBytes(StandardCharsets.US_ASCII);
-    private static final byte[] OTHER_SALT = "salt-two-not-a-secret".getBytes(StandardCharsets.US_ASCII);
+    // 32 bytes each, the minimum. Synthetic test salts, not secrets.
+    private static final byte[] SALT = "salt-one-not-a-secret-32-bytes!!".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] OTHER_SALT = "salt-two-not-a-secret-32-bytes!!".getBytes(StandardCharsets.US_ASCII);
 
     @Test
     void theSameNumberAndSaltAlwaysGiveTheSameKey() {
@@ -59,9 +60,14 @@ class CallerKeyTest {
     }
 
     @Test
-    void anEmptySaltIsRejected() {
+    void aSaltShorterThan32BytesIsRejected() {
+        assertThat(SALT).hasSize(CallerKey.MIN_SALT_BYTES);
         assertThatThrownBy(() -> CallerKey.fromPhone(NUMBER, new byte[0])).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> CallerKey.fromPhone(NUMBER, null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> CallerKey.fromPhone(NUMBER, new byte[31]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("5550006"));
+        assertThat(CallerKey.fromPhone(NUMBER, new byte[32]).value()).hasSize(64);
     }
 
     @Test

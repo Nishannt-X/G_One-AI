@@ -80,7 +80,10 @@ public sealed interface ConsoleEvent {
     record ToolCalled(CallId callId, long atMs, String tool, JsonNode args, boolean ok, String result,
                       long durationMs) implements ConsoleEvent {}
 
-    /** Memory was loaded at the start of the farmer leg. {@code returning} is true when anything was remembered. */
+    /**
+     * Memory was loaded at the start of the farmer leg. {@code returning} is true when anything was remembered. Not sent
+     * when the caller ID is withheld: no memory is loaded for that call.
+     */
     record MemoryLoaded(CallId callId, long atMs, CallerKey callerKey, boolean returning, List<ProfileFact> facts,
                         List<CallGist> gists) implements ConsoleEvent {
 
@@ -89,9 +92,11 @@ public sealed interface ConsoleEvent {
             gists = gists == null ? List.of() : List.copyOf(gists);
         }
 
+        /** @throws IllegalArgumentException for {@link FarmerMemory#withheld}, which has nothing to show */
         public static MemoryLoaded of(CallId callId, FarmerMemory memory, long atMs) {
-            return new MemoryLoaded(callId, atMs, memory.callerKey(), !memory.isEmpty(), memory.facts(),
-                    memory.gists());
+            CallerKey key = memory.callerKey().orElseThrow(
+                    () -> new IllegalArgumentException("No memory_loaded event for a withheld caller ID"));
+            return new MemoryLoaded(callId, atMs, key, !memory.isEmpty(), memory.facts(), memory.gists());
         }
     }
 

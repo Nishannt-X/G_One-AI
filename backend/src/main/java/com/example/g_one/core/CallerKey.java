@@ -16,6 +16,8 @@ import javax.crypto.spec.SecretKeySpec;
  * Caller ID is not identity: the same key only means the same number called.
  */
 public record CallerKey(@JsonValue String value) {
+    /** The shortest accepted HMAC key, from the memory decision: at least 32 random bytes. */
+    public static final int MIN_SALT_BYTES = 32;
     private static final Pattern HEX = Pattern.compile("[0-9a-f]{64}");
     private static final Pattern E164 = Pattern.compile("\\+[1-9][0-9]{6,14}");
 
@@ -35,13 +37,15 @@ public record CallerKey(@JsonValue String value) {
      * Hashes a phone number. The same number and salt always give the same key; another salt gives another key.
      *
      * @param e164 the number in E.164 form, such as {@code +15005550006}; surrounding spaces are ignored
-     * @param salt the secret HMAC key from configuration (use at least 32 random bytes); never logged or stored here
+     * @param salt the secret HMAC key from configuration, at least {@value #MIN_SALT_BYTES} random bytes; never logged
+     *     or stored here
      * @throws IllegalArgumentException when the number is not E.164 (for example a withheld "anonymous" caller) or the
-     *     salt is empty. The message never contains the number.
+     *     salt is missing or shorter than {@value #MIN_SALT_BYTES} bytes. The message never contains the number or the
+     *     salt.
      */
     public static CallerKey fromPhone(String e164, byte[] salt) {
-        if (salt == null || salt.length == 0) {
-            throw new IllegalArgumentException("A caller key needs a non-empty salt");
+        if (salt == null || salt.length < MIN_SALT_BYTES) {
+            throw new IllegalArgumentException("A caller key needs a salt of at least " + MIN_SALT_BYTES + " bytes");
         }
         String number = e164 == null ? "" : e164.strip();
         if (!E164.matcher(number).matches()) {

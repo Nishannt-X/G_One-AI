@@ -8,23 +8,27 @@ import com.example.g_one.core.Leg;
 import com.example.g_one.core.LegId;
 import com.example.g_one.core.LegRole;
 import com.example.g_one.core.LegSource;
+import com.example.g_one.core.PlaybackOutcome;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
  * A {@link Leg} for tests. It records what was played and how often playback was cleared, and lets the test push the
- * person's audio in ({@link #pushAudio}) or hang up from the far side ({@link #remoteHangup}). Listeners run on the
- * test's thread.
+ * person's audio in ({@link #pushAudio}), finish playback ({@link #finishPlayback}) or hang up from the far side
+ * ({@link #remoteHangup}). Queued audio counts as heard only when the test calls {@link #finishPlayback}. Listeners and
+ * {@link #playbackDone} futures complete on the test's thread.
  */
 public final class FakeLeg implements Leg {
     public static final Language HINDI = new Language("hi-IN", "Hindi", "Nalini");
     public static final Language ENGLISH = new Language("en-IN", "English", "Kaveri");
-    /** Test salt. Real salts come from configuration. */
-    public static final byte[] SALT = "test-salt-not-a-secret".getBytes(StandardCharsets.US_ASCII);
+    /** Test salt (32 bytes, the minimum). Real salts are random bytes from configuration. */
+    public static final byte[] SALT = "test-salt-not-a-secret-32-bytes!".getBytes(StandardCharsets.US_ASCII);
     /** Twilio's documented magic test numbers: synthetic, never a real person. */
     public static final CallerKey FARMER_KEY = CallerKey.fromPhone("+15005550006", SALT);
     public static final CallerKey BUYER_KEY = CallerKey.fromPhone("+15005550001", SALT);
@@ -40,10 +44,13 @@ public final class FakeLeg implements Leg {
     private final List<Consumer<AudioFrame>> audioListeners = new CopyOnWriteArrayList<>();
     private final List<Runnable> endListeners = new ArrayList<>();
     private final AtomicInteger clears = new AtomicInteger();
+    private final List<CompletableFuture<PlaybackOutcome>> playbackWaiters = new ArrayList<>();
+    private int unheardFrames;
     private boolean ended;
     private boolean hungUpByUs;
     private long pushedMs;
 
+    /** @param callerKey the hashed caller number, or null for a withheld caller ID */
     public FakeLeg(CallId callId, LegRole role, LegSource source, Language language, CallerKey callerKey) {
         this.id = LegId.random();
         this.callId = callId;
@@ -58,6 +65,11 @@ public final class FakeLeg implements Leg {
         return new FakeLeg(callId, LegRole.FARMER, LegSource.TWILIO, HINDI, FARMER_KEY);
     }
 
+    /** A Hindi-speaking farmer whose caller ID is withheld: memory is off. */
+    public static FakeLeg withheldFarmer(CallId callId) {
+        return new FakeLeg(callId, LegRole.FARMER, LegSource.TWILIO, HINDI, null);
+    }
+
     /** An English-speaking buyer on a simulated Twilio leg. */
     public static FakeLeg buyer(CallId callId) {
         return new FakeLeg(callId, LegRole.BUYER, LegSource.TWILIO, ENGLISH, BUYER_KEY);
@@ -68,18 +80,61 @@ public final class FakeLeg implements Leg {
     @Override public LegRole role() { return role; }
     @Override public LegSource source() { return source; }
     @Override public Language language() { return language; }
-    @Override public CallerKey callerKey() { return callerKey; }
+    @Override public Optional<CallerKey> callerKey() { return Optional.ofNullable(callerKey); }
 
     @Override
     public void play(AudioFrame frame) {
-        if (!isEnded()) {
+        synchronized (this) {
+            if (ended) {
+                return;
+            }
             played.add(frame);
+            unheardFrames++;
         }
     }
 
     @Override
     public void clearPlayback() {
         clears.incrementAndGet();
+        completeWaiters(PlaybackOutcome.CLEARED, false);
+    }
+
+    @Override
+    public CompletableFuture<PlaybackOutcome> playbackDone() {
+        synchronized (this) {
+            if (ended) {
+                return CompletableFuture.completedFuture(PlaybackOutcome.ENDED);
+            }
+            if (unheardFrames == 0) {
+                return CompletableFuture.completedFuture(PlaybackOutcome.PLAYED);
+            }
+            CompletableFuture<PlaybackOutcome> done = new CompletableFuture<>();
+            playbackWaiters.add(done);
+            return done;
+        }
+    }
+
+    /** The person has heard everything queued so far: pending {@link #playbackDone} futures complete as PLAYED. */
+    public void finishPlayback() {
+        completeWaiters(PlaybackOutcome.PLAYED, false);
+    }
+
+    /** Frames played but not yet heard or cleared. */
+    public synchronized int unheardFrames() {
+        return unheardFrames;
+    }
+
+    private void completeWaiters(PlaybackOutcome outcome, boolean endLeg) {
+        List<CompletableFuture<PlaybackOutcome>> toComplete;
+        synchronized (this) {
+            if (ended && !endLeg) {
+                return;
+            }
+            unheardFrames = 0;
+            toComplete = List.copyOf(playbackWaiters);
+            playbackWaiters.clear();
+        }
+        toComplete.forEach(f -> f.complete(outcome));
     }
 
     @Override
@@ -144,6 +199,7 @@ public final class FakeLeg implements Leg {
             toRun = List.copyOf(endListeners);
             endListeners.clear();
         }
+        completeWaiters(PlaybackOutcome.ENDED, true);
         toRun.forEach(Runnable::run);
     }
 

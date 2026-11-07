@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.example.g_one.core.AudioFrame;
 import com.example.g_one.core.CallId;
 import com.example.g_one.core.LegRole;
+import com.example.g_one.core.PlaybackOutcome;
 import com.example.g_one.core.SttListener;
 import com.example.g_one.core.TextToSpeech;
 import com.example.g_one.core.Turn;
@@ -71,6 +72,39 @@ class FakesTest {
         assertThat(leg.clearCount()).isEqualTo(1);
         assertThat(ended).containsExactly("first", "late");
         assertThat(leg.hungUpByUs()).isTrue();
+    }
+
+    @Test
+    void playbackDoneReportsPlayedClearedOrEnded() {
+        FakeLeg leg = FakeLeg.farmer(CallId.random());
+
+        assertThat(leg.playbackDone()).isCompletedWithValue(PlaybackOutcome.PLAYED);
+
+        leg.play(AudioFrame.silence(8000, 20, 0));
+        var heard = leg.playbackDone();
+        assertThat(heard).isNotDone();
+        leg.play(AudioFrame.silence(8000, 20, 20));
+        leg.finishPlayback();
+        assertThat(heard).isCompletedWithValue(PlaybackOutcome.PLAYED);
+        assertThat(leg.unheardFrames()).isZero();
+
+        leg.play(AudioFrame.silence(8000, 20, 40));
+        var bargedIn = leg.playbackDone();
+        leg.clearPlayback();
+        leg.finishPlayback();
+        assertThat(bargedIn).isCompletedWithValue(PlaybackOutcome.CLEARED);
+
+        leg.play(AudioFrame.silence(8000, 20, 60));
+        var cutOff = leg.playbackDone();
+        leg.remoteHangup();
+        assertThat(cutOff).isCompletedWithValue(PlaybackOutcome.ENDED);
+        assertThat(leg.playbackDone()).isCompletedWithValue(PlaybackOutcome.ENDED);
+    }
+
+    @Test
+    void aWithheldFarmerHasNoCallerKey() {
+        assertThat(FakeLeg.withheldFarmer(CallId.random()).callerKey()).isEmpty();
+        assertThat(FakeLeg.farmer(CallId.random()).callerKey()).contains(FakeLeg.FARMER_KEY);
     }
 
     @Test
