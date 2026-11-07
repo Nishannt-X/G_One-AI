@@ -2,6 +2,39 @@
 
 Newest first.
 
+## 2026-11-07 · Record the relayed full-app requirements as fixed inputs; design stays open
+- **Status:** accepted as direction; the wording of the added items awaits the user's confirmation. Every design
+  question under them is open.
+- **Context:** The [requirements register](FULL-APP-REQUIREMENTS.md) fixes three behaviours (zero intake for a known
+  caller, mandatory crop-specific storage RAG, one buyer offer with a spoken yes first). The user's latest list, relayed
+  to the orchestrator on 2026-11-07, is wider: lookup/cache first with a short fallback question, per-user languages with
+  translation, continuous full-duplex-ish streaming with voice-activity detection, barge-in and a target under one
+  second, bilateral private spoken cautions with escalation **as a proposal**, and per-phone structured memory with
+  provenance and privacy. A second team needs one place that says what is fixed and what is not.
+- **Options considered:** A) Leave the register as it is and let each reader reconcile. B) Rewrite the register and the
+  tickets now (rejected for this change: larger edit, and the added wording is not yet confirmed by the user). C) Record
+  the split here and in the standalone [teammate handoff](TEAMMATE-HANDOFF-2026-11-07.md) and leave the register and
+  tickets as written.
+- **Decision:** C. These are fixed inputs, in the same sense as register items 5 to 7: a ticket decides how, never
+  whether. **Fixed:** known caller = lookup in a local store first, nothing asked; unknown or failed lookup = one short,
+  natural intro question, never a scripted enrolment, never blocks translation; crop-specific storage RAG grounds
+  answers; one buyer offer, spoken yes before any matching or calling; each person has their own language with
+  translation; streaming is continuous on both legs with VAD and barge-in and an under-one-second **target**;
+  cautions stay private, spoken and bilateral; memory is per phone, structured, with provenance and privacy.
+  **Still open:** what "cache" adds, profile fields, the store, retrieval stack and dependencies, corpus sources,
+  language set and selection, what "full-duplex-ish" means and what the one second measures, mid-stream failure, the
+  fallback to completed turns, all escalation levels, triggers and actions (escalation is a proposal, and any action on
+  a person's call needs the user's explicit approval), consent, retention, deletion, disclosure and the Nov 10 cut line.
+  Where this entry and the register's sentence "the rest of how the eight areas behave is not approved" differ for these
+  items, this entry governs; the register and tickets 03, 04, 05 and 09 are not edited here and should be reconciled
+  once the user confirms the wording.
+- **Consequences:** No code, dependency, configuration or endpoint change, and no external call. The one-second figure is
+  a target, not a measurement: "real time" and "instant" stay on the never-say list until it is measured on the phones
+  that will be filmed. Caller ID still is not identity. Dependencies, schemas and stores still need their own entry and
+  the user's approval first. The register and the four tickets now lag this entry until reconciled.
+- **Decided by:** human (requirements, as relayed by the orchestrator) / agent (recording and split) ·
+  **Related:** [teammate handoff](TEAMMATE-HANDOFF-2026-11-07.md), [map](FULL-APP-WAYFINDER.md)
+
 ## 2026-11-07 · Supersede the November 10 browser-demo scope with a full-application target (planning only)
 - **Status:** accepted as direction; every design question under it is open.
 - **Context:** The user replaced the scope frozen in [FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md) with
