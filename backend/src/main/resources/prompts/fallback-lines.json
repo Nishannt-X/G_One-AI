@@ -1,0 +1,8 @@
+{
+  "_comment": "Spoken when the language model or a tool fails, so the farmer never hears silence. Keyed by Gnani locale code. en-IN is the default for any other language.",
+  "apology": {
+    "hi-IN": "माफ़ कीजिए, अभी थोड़ी दिक्कत आ रही है। कृपया एक बार फिर से बोलिए।",
+    "en-IN": "Sorry, I am having a little trouble right now. Please say that once more.",
+    "bn-IN": "দুঃখিত, এখন একটু সমস্যা হচ্ছে। দয়া করে আরেকবার বলুন।"
+  }
+}
