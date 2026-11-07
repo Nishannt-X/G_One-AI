@@ -3,65 +3,213 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>G-One</title>
-  <link rel="stylesheet" href="style.css">
+  <title>G-One: speak your language, be heard in theirs</title>
+  <meta name="description" content="G-One is a prototype that translates one spoken turn into the other person's language and voice, with private help that only its owner receives. Try the farmer and buyer demo.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="site.css">
 </head>
 <body>
-  <header>
-    <h1>G-One</h1>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <a class="brand" href="/" aria-label="G-One home">
+      <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true" focusable="false">
+        <circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" stroke-width="3.2" stroke-dasharray="50 19" transform="rotate(-40 16 16)"/>
+        <circle cx="16" cy="16" r="3.6" fill="var(--marigold)"/>
+      </svg>
+      <span>G-One</span>
+    </a>
+    <nav aria-label="Sections">
+      <a href="#demo">Live demo</a>
+      <a href="#how">How a turn works</a>
+      <a href="#usecase">Farmer and buyer</a>
+      <a href="#limits">Limits</a>
+    </nav>
     <span class="badge">Prototype</span>
   </header>
 
-  <main id="landing" hidden>
-    <h2 id="landingTitle"></h2>
-    <p id="landingHelp" class="muted"></p>
-    <label id="roleRow">I am the
-      <select id="roleSel">
-        <option value="farmer">Farmer</option>
-        <option value="buyer">Buyer</option>
-      </select>
-    </label>
-    <label>My language <select id="langSel"></select></label>
-    <label id="codeRow" hidden>Access code <input id="codeInput" type="password" autocomplete="off"></label>
-    <button id="goBtn" class="primary"></button>
-    <p id="landingMsg" class="error" role="alert"></p>
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">Hackathon prototype · voice in, voice out</p>
+        <h1 id="hero-title">Speak your language.<br>Be heard in theirs.</h1>
+        <p class="lede">G-One takes one spoken turn, turns it into the other person's language and voice, and can hand
+          each person private help that the other never receives. It is a working prototype, not a finished product.</p>
+        <p class="cta">
+          <a class="btn primary" href="#demo">Try the live demo</a>
+          <a class="btn" href="#limits">Read the limits first</a>
+        </p>
+        <ul class="facts" aria-label="What the prototype does">
+          <li><strong>Turn by turn</strong> One person speaks, stops, then the other hears the translation.</li>
+          <li><strong>Private by seat</strong> Some messages go to one person only.</li>
+          <li><strong>Voice-only yes</strong> An agreement needs a spoken yes from each person. No button.</li>
+        </ul>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <!-- Decorative: two speakers' voices meeting. Carries no data. -->
+        <svg viewBox="0 0 360 300" focusable="false">
+          <g fill="none" stroke-linecap="round">
+            <circle cx="110" cy="150" r="26" class="a1" stroke-width="10"/>
+            <path d="M110 80 A70 70 0 0 1 110 220" class="a1" stroke-width="6"/>
+            <path d="M110 50 A100 100 0 0 1 110 250" class="a1 fade" stroke-width="4"/>
+            <circle cx="250" cy="150" r="26" class="a2" stroke-width="10"/>
+            <path d="M250 80 A70 70 0 0 0 250 220" class="a2" stroke-width="6"/>
+            <path d="M250 50 A100 100 0 0 0 250 250" class="a2 fade" stroke-width="4"/>
+          </g>
+          <circle cx="180" cy="150" r="9" class="dot"/>
+        </svg>
+      </div>
+    </section>
+
+    <section id="demo" class="band" aria-labelledby="demo-title">
+      <div class="wrap">
+        <h2 id="demo-title">Live demo stage</h2>
+        <p class="sub">Both seats below are the real G-One app, running in this page and connected to this server. Nothing
+          is pre-recorded and nothing on the stage is scripted: the event rail only shows events the seats actually
+          receive.</p>
+
+        <form id="stageForm" class="controls" novalidate>
+          <div id="stageFields" class="fields">
+            <label>Farmer speaks <select id="farmerLang" required></select></label>
+            <label>Buyer speaks <select id="buyerLang" required></select></label>
+            <label id="codeRow" hidden>Access code <input id="accessCode" type="password" autocomplete="off"></label>
+          </div>
+          <div class="actions">
+            <button id="startBtn" class="btn primary" type="submit" disabled>Start a session</button>
+            <button id="endBtn" class="btn" type="button" hidden>End session and clear the seats</button>
+          </div>
+          <p id="stageMsg" class="error" role="alert"></p>
+          <p id="stageNotice" class="notice" role="status"></p>
+          <p id="stageInfo" class="notice" role="status"></p>
+        </form>
+
+        <div class="stage-grid">
+          <article class="seat" aria-labelledby="farmer-name">
+            <h3 id="farmer-name">Farmer seat</h3>
+            <p id="seat-farmer" class="seat-status" role="status">Idle. Start a session to fill this seat.</p>
+            <div class="phone">
+              <div class="phone-screen">
+                <div id="phone-farmer" class="phone-frame"></div>
+                <p id="idle-farmer" class="phone-idle">Empty seat.<br>Nothing is running here yet.</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="seat" aria-labelledby="buyer-name">
+            <h3 id="buyer-name">Buyer seat</h3>
+            <p id="seat-buyer" class="seat-status" role="status">Idle. Start a session to fill this seat.</p>
+            <div class="phone">
+              <div class="phone-screen">
+                <div id="phone-buyer" class="phone-frame"></div>
+                <p id="idle-buyer" class="phone-idle">Empty seat.<br>Nothing is running here yet.</p>
+              </div>
+            </div>
+          </article>
+
+          <aside class="rail-panel" aria-labelledby="rail-title">
+            <h3 id="rail-title">Live pipeline</h3>
+            <p class="small">Each lamp lights only after a seat reports a real event of that kind. They all start at
+              "waiting".</p>
+            <ul id="lamps" class="lamps"></ul>
+            <h3 id="log-title">Event rail</h3>
+            <div role="log" aria-live="polite" aria-labelledby="log-title">
+              <p id="railEmpty" class="small">No events yet. Start a session, then take a turn with the big button in a seat.</p>
+              <ol id="rail" class="rail"></ol>
+            </div>
+            <p class="small">The rail lists what happened, which seat received it and when. It never shows what anyone
+              said. "Received by" is what the seats reported, so a private message names one seat only.</p>
+          </aside>
+        </div>
+
+        <ul class="notes">
+          <li><strong>One device, two seats.</strong> Both seats share this browser's microphone and speakers. Use
+            headphones, take one turn at a time, and keep the other seat quiet. The real demo uses two phones.</li>
+          <li><strong>Microphone access.</strong> Browsers allow it only on HTTPS or on localhost.</li>
+          <li><strong>Use synthetic speech.</strong> Do not record real people or phone numbers.</li>
+          <li><strong>Prefer two real phones?</strong> <a href="/app.html">Open the plain app</a>, create a room and send
+            the link to the second phone.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="how" class="wrap section" aria-labelledby="how-title">
+      <h2 id="how-title">How one turn moves</h2>
+      <p class="sub">A diagram of the flow that is built. It is not live; the rail above is.</p>
+      <ol class="flow">
+        <li><span class="step">1</span><strong>Speak</strong><span>The browser records up to 30 seconds and sends it as audio.</span></li>
+        <li><span class="step">2</span><strong>Transcribe</strong><span>Gnani Prisma turns the audio into text.</span></li>
+        <li><span class="step">3</span><strong>Translate</strong><span>A language model translates and writes a form that is easy to speak.</span></li>
+        <li><span class="step">4</span><strong>Voice</strong><span>Gnani Timbre speaks the translation.</span></li>
+        <li><span class="step">5</span><strong>Listen</strong><span>Only the other person receives the voice. Both see the text.</span></li>
+      </ol>
+      <p class="private-lane"><strong>Private lane.</strong> After a buyer turn, separate checks may send the farmer, and only
+        the farmer, a dated price reference or a caution. They never block or delay the translated turn.</p>
+    </section>
+
+    <section id="usecase" class="band alt" aria-labelledby="usecase-title">
+      <div class="wrap">
+        <h2 id="usecase-title">Featured use case: farmer and buyer</h2>
+        <p class="sub">A farmer and a buyer who do not share a language negotiate a price. This is the first conversation
+          G-One is being tried on, not the limit of the idea. Status below is as recorded on 7 November 2026.</p>
+        <div class="cards">
+          <article class="card-s">
+            <h3>Translated turns</h3>
+            <p class="status ok">Built · tried on two real phones</p>
+            <p>English to Hindi and Hindi to English, several-second turns, 6 November 2026. Very short turns sometimes
+              need a retry. Stop-to-audible time is not yet measured, so we do not call it real time.</p>
+          </article>
+          <article class="card-s">
+            <h3>Private advice and caution</h3>
+            <p class="status warn">Built · not yet tried on the live model</p>
+            <p>After a clear buyer offer the farmer can see an AGMARKNET reference price for Common rice at Burdwan APMC,
+              with its date. After a buyer turn that a classifier calls a threat, the farmer gets a fixed-wording caution.
+              The classifier can miss threats and can be wrong. No caution does not mean the talk is safe.</p>
+          </article>
+          <article class="card-s">
+            <h3>Agreement by voice</h3>
+            <p class="status warn">Built · tested against fakes only</p>
+            <p>The farmer accepts, both phones play the same terms back, and each person says yes. Two yes replies
+              produce a nonbinding summary. The WhatsApp copy is not connected, so the phones say "not sent".
+              Nobody's identity is checked.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="beyond" class="wrap section" aria-labelledby="beyond-title">
+      <h2 id="beyond-title">Where else this pattern could go</h2>
+      <p class="sub">Ideas only. None of these is built, tested or promised.</p>
+      <ul class="ideas">
+        <li><strong>Service desks</strong> A clerk and a visitor who speak different languages.</li>
+        <li><strong>Rental and small trade</strong> Two people fixing a price or a date by voice.</li>
+        <li><strong>Field visits</strong> A health or extension worker talking with a family, with notes only the worker sees.</li>
+      </ul>
+    </section>
+
+    <section id="limits" class="band alt" aria-labelledby="limits-title">
+      <div class="wrap">
+        <h2 id="limits-title">Limits, said plainly</h2>
+        <ul class="limits">
+          <li>This is two browsers talking to one server. It is not a phone call and does not work on any phone line.</li>
+          <li>Each turn is translated after you stop speaking. It is not instant.</li>
+          <li>Speech recognition can mishear a number or a yes. The spoken read-back is the only check.</li>
+          <li>A price shown is a dated reference from AGMARKNET, not today's rate. It does not say what is fair.</li>
+          <li>A summary is a nonbinding record of two spoken yes replies. It is not a contract or a payment instruction.</li>
+          <li>Rooms live in the server's memory and disappear on restart or after sitting idle.</li>
+          <li>Use made-up names and examples. Do not record real people.</li>
+        </ul>
+      </div>
+    </section>
   </main>
 
-  <main id="room" hidden>
-    <section class="bar">
-      <span id="whoami"></span>
-      <span id="conn" class="chip">Connecting…</span>
-      <span id="peer" class="chip">Waiting for partner</span>
-    </section>
+  <footer class="foot">
+    <div class="wrap">
+      <p><strong>G-One</strong> · prototype · <a href="/app.html">Plain app for two phones</a></p>
+    </div>
+  </footer>
 
-    <section id="shareBox" hidden>
-      <p class="muted">Send this link to the other person (open it on their phone):</p>
-      <input id="shareLink" readonly>
-      <button id="copyBtn">Copy link</button>
-    </section>
-
-    <label>My language <select id="myLang"></select></label>
-
-    <button id="micBtn" class="mic" disabled>Tap to start speaking</button>
-    <p id="status" class="muted" aria-live="polite"></p>
-
-    <section id="failBox" class="fail" hidden>
-      <p id="failText"></p>
-      <button id="retryBtn" class="primary">Retry same recording</button>
-      <button id="rerecordBtn">Record again</button>
-    </section>
-
-    <section id="deal" class="deal" hidden aria-live="polite">
-      <strong>Agreement by voice</strong>
-      <p id="dealTerms"></p>
-      <p id="dealStatus"></p>
-      <p id="dealWho" class="muted"></p>
-      <p class="muted">A nonbinding summary only: not a contract, and nobody's identity is checked.</p>
-    </section>
-
-    <section id="log" aria-live="polite"></section>
-  </main>
-
-  <script src="app.js"></script>
+  <script src="stage-core.js"></script>
+  <script src="stage.js"></script>
 </body>
 </html>

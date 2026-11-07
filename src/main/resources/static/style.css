@@ -31,3 +31,7 @@ button.primary { background:var(--accent); color:#fff; border-color:var(--accent
 .deal { border:2px solid var(--accent); border-radius:10px; padding:.75rem; background:var(--card); }
 .deal p { margin:.25rem 0; }
 .card.deal { border-color:var(--accent); }
+.home { margin-left:auto; color:var(--accent); font-size:.9rem; }
+/* Inside a demo-stage seat the stage supplies the chrome; the share link is pointless there. */
+body.embed header, body.embed #shareBox { display:none; }
+body.embed main { max-width:none; padding:12px; }
