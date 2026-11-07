@@ -1,6 +1,8 @@
 package com.example.g_one.core;
 
+import java.util.ArrayDeque;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -24,7 +26,10 @@ public class LegRegistry {
 
     private final Map<LegId, Leg> byId = new ConcurrentHashMap<>();
     private final List<Consumer<Leg>> listeners = new CopyOnWriteArrayList<>();
+    /** Guards {@link #pending} and {@link #announcing}, and is held while listeners run. */
     private final Object announceLock = new Object();
+    private final Deque<Pending> pending = new ArrayDeque<>();
+    private boolean announcing;
 
     /**
      * Adds a live leg, then tells every {@link #onLegAdded} listener on the calling thread.
@@ -32,8 +37,13 @@ public class LegRegistry {
      * <p>Guarantees for listeners:
      * <ul>
      *   <li>Listener calls never overlap: registrations from many threads are announced one at a time, each leg to all
-     *       listeners in the order they were added. Keep listeners quick; hand slow work to another thread.</li>
-     *   <li>A leg that has already ended when it is registered is not announced and is not kept.</li>
+     *       listeners in the order they were added, before the next leg is announced. Keep listeners quick; hand slow
+     *       work to another thread.</li>
+     *   <li>A listener may itself call {@code register}. That call adds the leg and returns at once; the leg is
+     *       announced on the same thread after the current leg has been announced to every listener, never from inside a
+     *       listener call. Legs are announced in the order they were registered.</li>
+     *   <li>A leg that has already ended when its announcement starts (when it is registered, or while it waits behind
+     *       another announcement) is not announced and is not kept.</li>
      *   <li>A listener sees a leg before any end of that leg it observes: if the leg ends while it is being announced, an
      *       {@link Leg#onEnded} listener added from {@code onLegAdded} still runs (right away, per the {@link Leg}
      *       contract).</li>
@@ -46,16 +56,35 @@ public class LegRegistry {
         if (byId.putIfAbsent(leg.id(), leg) != null) {
             throw new IllegalStateException("Leg already registered: " + leg.id());
         }
-        AtomicBoolean ended = new AtomicBoolean();
-        // Runs right away when the leg has already ended, so the check below sees it.
+        Pending entry = new Pending(leg, new AtomicBoolean());
+        // Runs right away when the leg has already ended, so the check in announceQueued sees it.
         leg.onEnded(() -> {
-            ended.set(true);
+            entry.ended().set(true);
             byId.remove(leg.id(), leg);
         });
         synchronized (announceLock) {
-            if (ended.get()) {
-                log.debug("Leg {} ended before it was announced; not announcing it", leg.id());
+            pending.addLast(entry);
+            if (announcing) {
+                // Called from a listener on this thread (the lock is reentrant): the running loop announces it next.
                 return;
+            }
+            announcing = true;
+            try {
+                announceQueued();
+            } finally {
+                announcing = false;
+            }
+        }
+    }
+
+    /** Announces queued legs one at a time until none are left. Runs with {@link #announceLock} held. */
+    private void announceQueued() {
+        Pending next;
+        while ((next = pending.pollFirst()) != null) {
+            Leg leg = next.leg();
+            if (next.ended().get()) {
+                log.debug("Leg {} ended before it was announced; not announcing it", leg.id());
+                continue;
             }
             for (Consumer<Leg> l : listeners) {
                 try {
@@ -65,6 +94,9 @@ public class LegRegistry {
                 }
             }
         }
+    }
+
+    private record Pending(Leg leg, AtomicBoolean ended) {
     }
 
     /** Runs for every leg registered after this call (see {@link #register} for ordering). */

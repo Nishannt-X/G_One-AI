@@ -154,15 +154,93 @@ class InMemoryMemoryStoreTest {
         store.saveGist(SURESH, gist(FIRST, "first"));
         store.saveGist(OTHER, gist(SECOND, "someone else"));
 
-        assertThat(store.forget(SURESH)).isTrue();
+        assertThat(store.forget(SURESH, SECOND, 5_000)).isTrue();
 
         assertThat(store.load(SURESH)).isEmpty();
         assertThat(store.load(OTHER)).isPresent();
-        assertThat(store.forget(SURESH)).as("nothing left to forget").isFalse();
+        assertThat(store.forget(SURESH, SECOND, 5_000)).as("nothing left to forget").isFalse();
+        assertThat(store.forget(OTHER, SECOND, 5_000)).as("forgetting works per key").isTrue();
+    }
 
-        store.saveGist(SURESH, gist(SECOND, "a new call"));
-        assertThat(store.load(SURESH).orElseThrow().facts()).isEmpty();
-        assertThat(store.load(SURESH).orElseThrow().gists()).extracting(CallGist::summary).containsExactly("a new call");
+    @Test
+    void afterForgetTheSameCallsHangUpGistAndFactsAreDropped() {
+        CallId during = CallId.of("call-forget");
+        store.upsertFacts(SURESH, List.of(said("name", "Suresh", 1)));
+
+        store.forget(SURESH, during, 5_000);
+        // The call goes on after "forget me"; even writes stamped later must not bring memory back.
+        store.upsertFacts(SURESH, List.of(new ProfileFact("crop", "Onion", Provenance.said(during, 6_000))));
+        store.saveGist(SURESH, new CallGist(during, 4_000, 9_000, "hang-up gist", List.of()));
+        store.saveGist(SURESH, new CallGist(during, 7_000, 9_000, "same call, odd start time", List.of()));
+
+        assertThat(store.load(SURESH)).isEmpty();
+    }
+
+    @Test
+    void afterForgetLateWritesFromEarlierCallsAreDropped() {
+        store.forget(SURESH, SECOND, 5_000);
+
+        store.saveGist(SURESH, gist(FIRST, 1_000, "late gist from an earlier call"));
+        store.saveGist(SURESH, gist(CallId.of("call-0"), 5_000, "started at the forget time"));
+        store.upsertFacts(SURESH, List.of(said("district", "Nashik", 4_999), inferred("crop", "Onion", 5_000)));
+
+        assertThat(store.load(SURESH)).isEmpty();
+    }
+
+    @Test
+    void aLaterCallMayRememberAgainButOnlyItsOwnWrites() {
+        CallId later = CallId.of("call-later");
+        store.forget(SURESH, SECOND, 5_000);
+
+        store.upsertFacts(SURESH, List.of(
+                new ProfileFact("district", "Nashik", Provenance.said(later, 6_000)),
+                new ProfileFact("name", "old name", Provenance.said(FIRST, 4_000)),
+                new ProfileFact("crop", "Onion", Provenance.said(SECOND, 7_000))));
+        store.saveGist(SURESH, new CallGist(later, 6_000, 7_000, "a new call", List.of()));
+        store.saveGist(SURESH, gist(FIRST, 1_000, "late gist from before the forget"));
+
+        FarmerMemory m = store.load(SURESH).orElseThrow();
+        assertThat(m.facts()).extracting(ProfileFact::field).containsExactly("district");
+        assertThat(m.gists()).extracting(CallGist::summary).containsExactly("a new call");
+    }
+
+    @Test
+    void forgettingTwiceKeepsBothCallsAndTheLatestTime() {
+        CallId third = CallId.of("call-3");
+        store.forget(SURESH, SECOND, 5_000);
+        store.forget(SURESH, third, 3_000);
+
+        store.saveGist(SURESH, new CallGist(SECOND, 8_000, 9_000, "second call, still forgotten", List.of()));
+        store.saveGist(SURESH, new CallGist(third, 8_000, 9_000, "third call, still forgotten", List.of()));
+        store.saveGist(SURESH, gist(CallId.of("call-4"), 4_000, "before the latest forget"));
+        assertThat(store.load(SURESH)).isEmpty();
+
+        store.saveGist(SURESH, gist(CallId.of("call-5"), 5_001, "after both"));
+        assertThat(store.load(SURESH).orElseThrow().gists()).extracting(CallGist::summary).containsExactly("after both");
+    }
+
+    @Test
+    void writesRacingAForgetNeverSurviveIt() throws Exception {
+        CallId during = CallId.of("call-forget");
+        for (int round = 0; round < 50; round++) {
+            InMemoryMemoryStore racing = new InMemoryMemoryStore();
+            List<Runnable> tasks = new ArrayList<>();
+            for (int i = 0; i < 40; i++) {
+                int n = i;
+                // In-flight writes from the forgetting call (stamped after the forget, too) and from earlier calls.
+                tasks.add(() -> racing.saveGist(SURESH, new CallGist(during, 4_000, 9_000, "gist " + n, List.of())));
+                tasks.add(() -> racing.upsertFacts(SURESH,
+                        List.of(new ProfileFact("f" + n, "v", Provenance.said(during, 4_000 + n * 100)))));
+                tasks.add(() -> racing.saveGist(SURESH, gist(CallId.of("early-" + n), n, "early " + n)));
+                tasks.add(() -> racing.upsertFacts(SURESH,
+                        List.of(new ProfileFact("g" + n, "v", Provenance.inferred(CallId.of("early-" + n), n)))));
+            }
+            tasks.add(tasks.size() / 2, () -> racing.forget(SURESH, during, 5_000));
+
+            runConcurrently(tasks);
+
+            assertThat(racing.load(SURESH)).as("round %d", round).isEmpty();
+        }
     }
 
     @Test

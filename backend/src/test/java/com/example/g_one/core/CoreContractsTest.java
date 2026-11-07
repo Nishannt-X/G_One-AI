@@ -142,6 +142,65 @@ class CoreContractsTest {
     }
 
     @Test
+    void aLegRegisteredFromAListenerIsAnnouncedAfterTheCurrentOneWithoutNesting() {
+        LegRegistry registry = new LegRegistry();
+        List<String> seen = new ArrayList<>();
+        AtomicInteger depth = new AtomicInteger();
+        AtomicInteger maxDepth = new AtomicInteger();
+        CallId call = CallId.random();
+        FakeLeg farmer = FakeLeg.farmer(call);
+        FakeLeg buyer = FakeLeg.buyer(call);
+        FakeLeg third = FakeLeg.buyer(CallId.random());
+        registry.onLegAdded(l -> {
+            maxDepth.accumulateAndGet(depth.incrementAndGet(), Math::max);
+            seen.add("a:" + l.role().wire());
+            if (l == farmer) {
+                registry.register(buyer);
+                registry.register(third);
+                seen.add("a:registered");
+                assertThat(registry.find(buyer.id())).as("kept at once, announced later").contains(buyer);
+            }
+            depth.decrementAndGet();
+        });
+        registry.onLegAdded(l -> {
+            maxDepth.accumulateAndGet(depth.incrementAndGet(), Math::max);
+            seen.add("b:" + l.role().wire());
+            l.onEnded(() -> seen.add("ended:" + l.role().wire()));
+            depth.decrementAndGet();
+        });
+
+        registry.register(farmer);
+
+        assertThat(seen).containsExactly(
+                "a:farmer", "a:registered", "b:farmer", "a:buyer", "b:buyer", "a:buyer", "b:buyer");
+        assertThat(maxDepth.get()).as("listeners never run inside each other").isEqualTo(1);
+
+        buyer.remoteHangup();
+        assertThat(seen).endsWith("ended:buyer");
+    }
+
+    @Test
+    void aQueuedLegThatEndsBeforeItsTurnIsNeitherAnnouncedNorKept() {
+        LegRegistry registry = new LegRegistry();
+        List<Leg> announced = new ArrayList<>();
+        CallId call = CallId.random();
+        FakeLeg farmer = FakeLeg.farmer(call);
+        FakeLeg buyer = FakeLeg.buyer(call);
+        registry.onLegAdded(l -> {
+            if (l == farmer) {
+                registry.register(buyer);
+                buyer.remoteHangup();
+            }
+        });
+        registry.onLegAdded(announced::add);
+
+        registry.register(farmer);
+
+        assertThat(announced).containsExactly(farmer);
+        assertThat(registry.find(buyer.id())).isEmpty();
+    }
+
+    @Test
     void aFailingLegListenerDoesNotStopTheOthers() {
         LegRegistry registry = new LegRegistry();
         List<Leg> announced = new ArrayList<>();
@@ -204,6 +263,29 @@ class CoreContractsTest {
         assertThat(ctx.callerKey()).contains(FakeLeg.FARMER_KEY);
         assertThat(ToolResult.ok("x").ok()).isTrue();
         assertThat(ToolResult.error("price not available").ok()).isFalse();
+    }
+
+    @Test
+    void aToolContextRejectsMemoryThatIsNotTheFarmerLegs() {
+        CallId call = CallId.of("call-1");
+        FakeLeg farmer = FakeLeg.farmer(call);
+        FakeLeg withheld = FakeLeg.withheldFarmer(call);
+        FakeLeg buyer = FakeLeg.buyer(call);
+
+        assertThatThrownBy(() -> new CallContext(call, farmer, farmer.language(), FarmerMemory.empty(FakeLeg.BUYER_KEY)))
+                .as("another caller's memory").isInstanceOf(IllegalArgumentException.class)
+                .hasMessageNotContaining(FakeLeg.BUYER_KEY.value()).hasMessageNotContaining(FakeLeg.FARMER_KEY.value());
+        assertThatThrownBy(() -> new CallContext(call, farmer, farmer.language(), FarmerMemory.withheld()))
+                .as("known caller with withheld memory").isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new CallContext(call, withheld, withheld.language(),
+                FarmerMemory.empty(FakeLeg.FARMER_KEY)))
+                .as("withheld caller with keyed memory").isInstanceOf(IllegalArgumentException.class)
+                .hasMessageNotContaining(FakeLeg.FARMER_KEY.value());
+        assertThatThrownBy(() -> new CallContext(CallId.of("call-2"), farmer, farmer.language(),
+                FarmerMemory.empty(FakeLeg.FARMER_KEY)))
+                .as("leg from another call").isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new CallContext(call, buyer, buyer.language(), FarmerMemory.empty(FakeLeg.BUYER_KEY)))
+                .as("buyer leg as the farmer").isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
