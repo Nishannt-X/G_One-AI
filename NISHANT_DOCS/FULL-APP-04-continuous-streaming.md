@@ -19,9 +19,9 @@ Grilling (HITL). The user defines what "continuous" means to them first. A rough
 ## Known
 
 - Today's path is completed-turn REST: Start, speak, Stop, one clip of at most 30 s, then Prisma, then translation, then Timbre, and the listener fetches the audio. Both phones get events over WebSocket (notifications only). Stop-to-audible latency has **never been measured**; very short turns sometimes need a retry for an unisolated cause.
-- Turn-based features built on that path: the caution check (one model call per turn, either person), the buyer offer reader, the agreement state machine (frozen terms, read-back, playback reports, 120 s limit), the failure rule "abort the whole turn, retry or re-record" ([FARMER-CALL-06](FARMER-CALL-06-failure-behavior.md), provisional).
-- The earlier rule: do not add streaming until measured latency shows it is needed ([WAYFINDER-01](WAYFINDER-01-gnani-speech-contract.md)). The user's instruction now asks for streaming, so that rule no longer settles it; the evidence it asked for does not exist yet.
-- The old phone-leg speech contract [FARMER-CALL-04](FARMER-CALL-04-speech-contract.md) is open and unedited; its question is absorbed here.
+- Turn-based features built on that path: the caution check (one model call per turn, either person), the buyer offer reader, the agreement state machine (frozen terms, read-back, playback reports, 120 s limit), the failure rule "abort the whole turn, retry or re-record" ([FARMER-CALL-06](../FARMER-CALL-06-failure-behavior.md), provisional).
+- The earlier rule: do not add streaming until measured latency shows it is needed ([WAYFINDER-01](../WAYFINDER-01-gnani-speech-contract.md)). The user's instruction now asks for streaming, so that rule no longer settles it; the evidence it asked for does not exist yet.
+- The old phone-leg speech contract [FARMER-CALL-04](../FARMER-CALL-04-speech-contract.md) is open and unedited; its question is absorbed here.
 
 ## Sub-questions
 

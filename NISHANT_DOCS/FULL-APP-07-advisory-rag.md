@@ -28,7 +28,7 @@ Grilling (HITL). The requirement is approved ([register item 6](FULL-APP-REQUIRE
 - The live fetch was verified with fakes, a captured response and one real read-only call on 2026-11-06. It was never run in a live phone session. The endpoint is undocumented; stale or closed-market data on Nov 10 is likely (the Diwali closure is unverified).
 - Wording rule for any price statement: "AGMARKNET listed ₹X per quintal for <crop, variety, market> on <date>, a dated reference". Never "today's price", "modal", "fair" or "live rate".
 - The 2026-11-07 handoff (`HANDOFF-2026-11-07.md`, branch `docs/project-handoff-2026-11-07`) mentions an untracked research file with seven unapproved feature ideas (unit disambiguation, net price, multi-mandi spread, and others). It was written against pre-merge code and its citations were not re-checked. Treat it as input only if the user brings it in.
-- No retrieval index, vector store or embedding component exists. The 2026-11-06 trimmed dependency set ([DECISIONS](DECISIONS.md)) belonged to the browser demo and is **not a barrier**; the retrieval stack is a choice for question 4.
+- No retrieval index, vector store or embedding component exists. The 2026-11-06 trimmed dependency set ([DECISIONS](../DECISIONS.md)) belonged to the browser demo and is **not a barrier**; the retrieval stack is a choice for question 4.
 
 ## Sub-questions
 

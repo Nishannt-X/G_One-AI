@@ -25,7 +25,7 @@ Grilling (HITL). The flow below is approved ([register item 5](FULL-APP-REQUIREM
 
 ## Known
 
-- Today there is no caller ID and no profile. A person joins a room by link; the creator picks the role (farmer or buyer) and each person picks a language on screen. Auth is an unguessable room id plus a per-person bearer token ([DEMO](DEMO.md#how-it-works)).
+- Today there is no caller ID and no profile. A person joins a room by link; the creator picks the role (farmer or buyer) and each person picks a language on screen. Auth is an unguessable room id plus a per-person bearer token ([DEMO](../DEMO.md#how-it-works)).
 - Whether a number is observed at all depends on the call path ([Telephony path and vendor feasibility](FULL-APP-01-telephony-vendor-feasibility.md)): if the app dials both people it already knows the numbers it was given; if people dial in, the network presents one.
 - What may be stored, and under what consent, is for [Per-phone memory and privacy](FULL-APP-05-per-phone-memory-privacy.md). The two tickets can be decided together; this one records the assumption it makes about storage.
 - The only identity statement in the repo is a negative one: the summary says identities were not verified.

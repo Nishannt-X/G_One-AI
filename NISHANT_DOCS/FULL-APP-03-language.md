@@ -19,8 +19,8 @@ Grilling (HITL). The user speaks for themselves; no agent answers on the user's 
 ## Known
 
 - Today: a configured list (default Hindi, English, Tamil, Kannada); each person picks theirs on screen and can change it between turns. English to Hindi and Hindi to English ran on two real phones on 2026-11-06. The public pair was never chosen; the plan was to pick it after measuring quality and latency.
-- Safeguards written for two languages only: the agreement's negation guard covers English and Hindi ([DECISIONS](DECISIONS.md), 2026-11-07). The caution classifier's quality in Hindi, Tamil and Kannada is unmeasured.
-- Without a screen (a phone call), a language menu or an automatic guess is needed; [FARMER-CALL-02](FARMER-CALL-02-call-interaction.md) once planned keypad choices from a spoken menu. That ticket is history, not a decision for the full app.
+- Safeguards written for two languages only: the agreement's negation guard covers English and Hindi ([DECISIONS](../DECISIONS.md), 2026-11-07). The caution classifier's quality in Hindi, Tamil and Kannada is unmeasured.
+- Without a screen (a phone call), a language menu or an automatic guess is needed; [FARMER-CALL-02](../FARMER-CALL-02-call-interaction.md) once planned keypad choices from a spoken menu. That ticket is history, not a decision for the full app.
 
 ## Sub-questions
 
@@ -37,7 +37,7 @@ Grilling (HITL). The user speaks for themselves; no agent answers on the user's 
 
 - No unmeasured language quality claims. Any language outside the verified pair is "available, unverified" at best.
 - Stay consistent with the facts from [Gnani realtime streaming and language facts](FULL-APP-02-gnani-streaming-and-language-facts.md); do not decide anything those facts rule out.
-- Do not weaken the wording table in [FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md).
+- Do not weaken the wording table in [FARMER-CALL-07](../FARMER-CALL-07-nov10-architecture-scope.md).
 
 ## Done when
 

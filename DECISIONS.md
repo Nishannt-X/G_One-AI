@@ -5,7 +5,7 @@ Newest first.
 ## 2026-11-07 · Record the relayed full-app requirements as fixed inputs; design stays open
 - **Status:** accepted; the user confirmed the whole list on 2026-11-07 ("all this is what we are making"). Every
   design question under it is open.
-- **Context:** The [requirements register](FULL-APP-REQUIREMENTS.md) fixes three behaviours (zero intake for a known
+- **Context:** The [requirements register](NISHANT_DOCS/FULL-APP-REQUIREMENTS.md) fixes three behaviours (zero intake for a known
   caller, mandatory crop-specific storage RAG, one buyer offer with a spoken yes first). The user's latest list, relayed
   to the orchestrator on 2026-11-07, is wider: lookup/cache first with a short fallback question, per-user languages with
   translation, continuous full-duplex-ish streaming with voice-activity detection, barge-in and a target under one
@@ -13,7 +13,7 @@ Newest first.
   provenance and privacy. A second team needs one place that says what is fixed and what is not.
 - **Options considered:** A) Leave the register as it is and let each reader reconcile. B) Rewrite the register and the
   tickets now (rejected for this change: a larger edit than this docs fix). C) Record
-  the split here and in the standalone [teammate handoff](TEAMMATE-HANDOFF-2026-11-07.md) and leave the register and
+  the split here and in the standalone [teammate handoff](NISHANT_DOCS/TEAMMATE-HANDOFF-2026-11-07.md) and leave the register and
   tickets as written.
 - **Decision:** C. These are fixed inputs, in the same sense as register items 5 to 7: a ticket decides how, never
   whether. **Fixed:** known caller = lookup in a local store first, nothing asked; unknown or failed lookup = one short,
@@ -33,7 +33,7 @@ Newest first.
   that will be filmed. Caller ID still is not identity. Dependencies, schemas and stores still need their own entry and
   the user's approval first. The register and the four tickets now lag this entry until reconciled.
 - **Decided by:** human (requirements, as relayed by the orchestrator) / agent (recording and split) ·
-  **Related:** [teammate handoff](TEAMMATE-HANDOFF-2026-11-07.md), [map](FULL-APP-WAYFINDER.md)
+  **Related:** [teammate handoff](NISHANT_DOCS/TEAMMATE-HANDOFF-2026-11-07.md), [map](NISHANT_DOCS/FULL-APP-WAYFINDER.md)
 
 ## 2026-11-07 · Supersede the November 10 browser-demo scope with a full-application target (planning only)
 - **Status:** accepted as direction; every design question under it is open.
@@ -46,8 +46,8 @@ Newest first.
   with decision tickets, mark the old map superseded for future scope, and keep its history. C) Start building the full
   app straight away (rejected: nothing about how the areas should behave has been decided, and several would break
   standing decisions on storage, dependencies and wording).
-- **Decision:** B. [FULL-APP-WAYFINDER](FULL-APP-WAYFINDER.md) holds the map, ten open tickets and a
-  [requirements register](FULL-APP-REQUIREMENTS.md) that separates user-approved items, carried-forward decisions,
+- **Decision:** B. [FULL-APP-WAYFINDER](NISHANT_DOCS/FULL-APP-WAYFINDER.md) holds the map, ten open tickets and a
+  [requirements register](NISHANT_DOCS/FULL-APP-REQUIREMENTS.md) that separates user-approved items, carried-forward decisions,
   built status and open design. [FARMER-CALL-WAYFINDER](FARMER-CALL-WAYFINDER.md) gets a superseded banner and
   front-matter fields only; its body and the earlier entries here stand as written. The browser demo stays the fallback
   floor. The Say / never say table in FARMER-CALL-07 keeps governing public claims until a ticket replaces specific rows.
@@ -56,7 +56,7 @@ Newest first.
   approval before anything is built. The decision work itself consumes part of the three days left, so the map
   recommends running both research tickets first and opening the route ticket early in triage mode. Nothing in the new
   documents is verified against a running service.
-- **Decided by:** human (direction and scope) / agent (map structure and wording) · **Related:** [map](FULL-APP-WAYFINDER.md)
+- **Decided by:** human (direction and scope) / agent (map structure and wording) · **Related:** [map](NISHANT_DOCS/FULL-APP-WAYFINDER.md)
 
 ## 2026-11-07 · Harden the cautions after security review: receiving-money scams, wording, honesty, clip probing
 - **Status:** accepted (hackathon scope); classifier quality still unverified against the live model.

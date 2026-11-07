@@ -24,9 +24,9 @@ Today is 2026-11-07; the old plan froze features after Nov 8. Nothing blocks thi
 ## Known
 
 - Built and partly verified: the two-phone browser demo (the floor). Other pieces exist as fakes-only or unverified code. See the [register](FULL-APP-REQUIREMENTS.md#c-capability-matrix-full-target-today-nov-10-slice).
-- Previous plan and truth table: [FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md). Previous route steps there were: restart the live app with fresh secrets; agreement against fakes; Sandbox sender; freeze after Nov 8; Nov 9 three scripted runs on two phones from a private jar copy. Those steps belong to the superseded scope and are history; this ticket decides what is reused.
+- Previous plan and truth table: [FARMER-CALL-07](../FARMER-CALL-07-nov10-architecture-scope.md). Previous route steps there were: restart the live app with fresh secrets; agreement against fakes; Sandbox sender; freeze after Nov 8; Nov 9 three scripted runs on two phones from a private jar copy. Those steps belong to the superseded scope and are history; this ticket decides what is reused.
 - Operating rules from the handoff (`HANDOFF-2026-11-07.md`, on branch `docs/project-handoff-2026-11-07`): secrets only through a fresh secure prompt; run a private copy of the jar; stop before restart because rooms vanish; no demo process or tunnel was running on 2026-11-07; the user owns every PR and merge.
-- Test suite: [DEMO](DEMO.md#run-locally) states 162 tests; the handoff did not rerun it and did not reconcile the count.
+- Test suite: [DEMO](../DEMO.md#run-locally) states 162 tests; the handoff did not rerun it and did not reconcile the count.
 
 ## Sub-questions
 

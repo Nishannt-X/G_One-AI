@@ -18,8 +18,8 @@ Grilling (HITL). The user decides; an agent never answers for them. Legal and re
 
 ## Known
 
-- Nothing is remembered today. Rooms, clips and agreement state live in server memory on one instance and die with the room or a restart. The 2026-11-06 decision for no database, Redis or new dependency ([DECISIONS](DECISIONS.md)) belonged to the browser demo; it is **not a barrier** to this ticket. The user has approved a local-database lookup on every call, so some store is required; which one is for question 5.
-- Spoken content already reaches several model calls per turn (translation, caution check, offer reading, agreement-reply check). That is documented, not hidden ([DEMO](DEMO.md#how-it-works)).
+- Nothing is remembered today. Rooms, clips and agreement state live in server memory on one instance and die with the room or a restart. The 2026-11-06 decision for no database, Redis or new dependency ([DECISIONS](../DECISIONS.md)) belonged to the browser demo; it is **not a barrier** to this ticket. The user has approved a local-database lookup on every call, so some store is required; which one is for question 5.
+- Spoken content already reaches several model calls per turn (translation, caution check, offer reading, agreement-reply check). That is documented, not hidden ([DEMO](../DEMO.md#how-it-works)).
 - Caution wording never echoes what was said, and a spoken secret is not stored in a caution. The agreement summary says identities were not verified.
 - The Gnani rules require synthetic data and no real recordings or numbers in the project or demo.
 - Telephony feasibility ([Telephony path and vendor feasibility](FULL-APP-01-telephony-vendor-feasibility.md)) determines whether a number is observed or dialled, which changes how the key behaves. That informs this ticket but does not block it: decide the policy for either direction, and note which parts depend on the path.

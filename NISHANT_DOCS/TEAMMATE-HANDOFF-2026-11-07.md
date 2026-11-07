@@ -369,11 +369,11 @@ Everything above stands without these. In a checkout of `docs/full-app-wayfinder
   [05](FULL-APP-05-per-phone-memory-privacy.md), [06](FULL-APP-06-caller-id-profile-lookup.md),
   [07](FULL-APP-07-advisory-rag.md), [08](FULL-APP-08-consent-to-match.md),
   [09](FULL-APP-09-bilateral-shield-escalation.md), [10](FULL-APP-10-integrated-nov10-route.md)
-- [DECISIONS](DECISIONS.md) (newest first), [DEMO](DEMO.md) (run steps, how it works, not yet verified),
-  [GLOSSARY](GLOSSARY.md)
-- Superseded but kept as history: [old map](FARMER-CALL-WAYFINDER.md),
-  [Nov 10 scope and say / never say table](FARMER-CALL-07-nov10-architecture-scope.md),
-  [2026-11-06 handoff](HANDOFF-2026-11-06.md) (stale)
+- [DECISIONS](../DECISIONS.md) (newest first), [DEMO](../DEMO.md) (run steps, how it works, not yet verified),
+  [GLOSSARY](../GLOSSARY.md)
+- Superseded but kept as history: [old map](../FARMER-CALL-WAYFINDER.md),
+  [Nov 10 scope and say / never say table](../FARMER-CALL-07-nov10-architecture-scope.md),
+  [2026-11-06 handoff](../HANDOFF-2026-11-06.md) (stale)
 - Only on branch `docs/project-handoff-2026-11-07`: `HANDOFF-2026-11-07.md` (not linked because it is not in this branch)
 - Gnani documentation the research ticket starts from: Prisma realtime `docs.gnani.ai/api/STT/stt-websocket`, Timbre
   realtime `docs.gnani.ai/api/TTS/tts-websocket`. Not read for this file.

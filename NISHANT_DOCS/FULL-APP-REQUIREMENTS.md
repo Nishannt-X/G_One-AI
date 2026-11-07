@@ -25,7 +25,7 @@ Companion to [FULL-APP-WAYFINDER](FULL-APP-WAYFINDER.md). It is a reference shee
 
 ## B. Carried forward and still in force (USER-EARLIER)
 
-Source for each: [FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md), [DECISIONS](DECISIONS.md), [DEMO](DEMO.md) unless noted. Any of these can be changed, but only by the user, in a ticket.
+Source for each: [FARMER-CALL-07](../FARMER-CALL-07-nov10-architecture-scope.md), [DECISIONS](../DECISIONS.md), [DEMO](../DEMO.md) unless noted. Any of these can be changed, but only by the user, in a ticket.
 
 | Item | Where it could now conflict |
 | --- | --- |
@@ -36,12 +36,12 @@ Source for each: [FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md), [
 | Common rice at Burdwan APMC for the Nov 10 browser demo | The advisory is now crop-specific storage RAG (item 6), so a fixed commodity and market is at most a demo-data choice for [ticket 07](FULL-APP-07-advisory-rag.md) and the route ticket |
 | Twilio WhatsApp Sandbox for the summary (planned, not built, human's account first) | Open human choices: number source, stale-price fallback |
 | Synthetic names, numbers, prices and recordings only in the repo and the demo (Gnani rules) | [Per-phone memory](FULL-APP-05-per-phone-memory-privacy.md) and [caller-ID profile](FULL-APP-06-caller-id-profile-lookup.md) both want real-number-shaped data |
-| Browser over mobile data was the Nov 10 form ([FARMER-CALL-01](FARMER-CALL-01-telephony-gate.md)) | Superseded for future scope. Whether the full app is phone calls, browser, or both is [telephony feasibility](FULL-APP-01-telephony-vendor-feasibility.md)'s job. The user has not said |
+| Browser over mobile data was the Nov 10 form ([FARMER-CALL-01](../FARMER-CALL-01-telephony-gate.md)) | Superseded for future scope. Whether the full app is phone calls, browser, or both is [telephony feasibility](FULL-APP-01-telephony-vendor-feasibility.md)'s job. The user has not said |
 | Spoken retry for an unclear confirmation | Applies to the agreement; streaming may change what "a reply" is |
 
 ### Not a barrier: the 2026-11-06 "trimmed set"
 
-[DECISIONS](DECISIONS.md) (2026-11-06) trimmed the build to no database, no Redis and no new dependency. That choice was made for the browser demo and is **not a scope barrier** for the full application: items 5 and 6 above need a local database and a retrieval store. What stays open is the *choice*: which store, which retrieval method, which dependencies, what schema. Each needs its own `DECISIONS` entry and the user's approval before it is added (the Streamliner ask-first rule for dependencies and schemas). That choice is recorded in tickets [05](FULL-APP-05-per-phone-memory-privacy.md), [06](FULL-APP-06-caller-id-profile-lookup.md) and [07](FULL-APP-07-advisory-rag.md) and ordered by the route ticket.
+[DECISIONS](../DECISIONS.md) (2026-11-06) trimmed the build to no database, no Redis and no new dependency. That choice was made for the browser demo and is **not a scope barrier** for the full application: items 5 and 6 above need a local database and a retrieval store. What stays open is the *choice*: which store, which retrieval method, which dependencies, what schema. Each needs its own `DECISIONS` entry and the user's approval before it is added (the Streamliner ask-first rule for dependencies and schemas). That choice is recorded in tickets [05](FULL-APP-05-per-phone-memory-privacy.md), [06](FULL-APP-06-caller-id-profile-lookup.md) and [07](FULL-APP-07-advisory-rag.md) and ordered by the route ticket.
 
 ## C. Capability matrix: full target, today, Nov 10 slice
 
@@ -49,7 +49,7 @@ Source for each: [FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md), [
 
 | Area | Full target (user's name only) | Today: built / verified | Nov 10 slice | Decided by |
 | --- | --- | --- | --- | --- |
-| Telephony and vendor | Not stated beyond "feasibility" | Not built. Legacy Twilio prototype is tracked but **excluded from the build**. A Twilio trial blocks Media Streams ([FARMER-CALL-01](FARMER-CALL-01-telephony-gate.md), 2026-11-06, not re-verified). No account tested | **Undecided** | [01](FULL-APP-01-telephony-vendor-feasibility.md) |
+| Telephony and vendor | Not stated beyond "feasibility" | Not built. Legacy Twilio prototype is tracked but **excluded from the build**. A Twilio trial blocks Media Streams ([FARMER-CALL-01](../FARMER-CALL-01-telephony-gate.md), 2026-11-06, not re-verified). No account tested | **Undecided** | [01](FULL-APP-01-telephony-vendor-feasibility.md) |
 | Caller-ID profile and lookup | Item 5: local-database lookup first; known number = zero intake; unknown or failed lookup = one short natural intro question; never a scripted enrolment | Not built. The browser path has no phone number at all; roles are picked by the room creator | **Undecided** | [06](FULL-APP-06-caller-id-profile-lookup.md) |
 | Per-phone memory and privacy | Not stated beyond the name, but items 5 to 7 require a local database of callers | Not built. Rooms, clips and agreement state live in server memory on one instance and vanish on restart | **Undecided** | [05](FULL-APP-05-per-phone-memory-privacy.md) |
 | Advisory RAG | Item 6: mandatory crop-specific storage RAG, answers grounded in retrieved content; not price-only | Not built. What exists is not RAG: the advisory is a deterministic comparison against one AGMARKNET row (one commodity, variety, market). Built; live call verified once read-only on 2026-11-06; never run in a live phone session | **Undecided** | [07](FULL-APP-07-advisory-rag.md) |

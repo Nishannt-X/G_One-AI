@@ -22,7 +22,7 @@ Grilling (HITL). The core is approved ([register item 7](FULL-APP-REQUIREMENTS.m
 - A spoken **yes** comes before any matching and before any calling. No yes, no match, no call.
 - It follows the advisory ([Advisory RAG](FULL-APP-07-advisory-rag.md)); the position of the offer is decided there.
 
-Today nothing matches people to anything. The only consent in the app is the voice-only agreement to a frozen offer ([FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md)). **That is a different consent**: it confirms terms, not a connection, and must not be reused or blurred.
+Today nothing matches people to anything. The only consent in the app is the voice-only agreement to a frozen offer ([FARMER-CALL-07](../FARMER-CALL-07-nov10-architecture-scope.md)). **That is a different consent**: it confirms terms, not a connection, and must not be reused or blurred.
 
 ## Sub-questions
 

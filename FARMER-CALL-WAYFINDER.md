@@ -2,12 +2,12 @@
 title: Plan the G-One farmer–buyer phone-call demo
 labels: [wayfinder:map]
 status: superseded-for-future-scope
-superseded_by: FULL-APP-WAYFINDER.md
+superseded_by: NISHANT_DOCS/FULL-APP-WAYFINDER.md
 superseded_on: 2026-11-07
 tracker: local-markdown
 ---
 
-> **Superseded for future scope on 2026-11-07.** The user replaced the November 10 browser-demo scope with a full-application target by the same date, "or as close as possible". Planning for that now lives in [Plan the full G-One application for November 10](FULL-APP-WAYFINDER.md). Everything below is kept as history exactly as written on its dates: its decisions, status notes and fog describe the browser-demo effort and are not corrections. Two things carry over: the browser demo remains the built **fallback floor**, and the wording table in [FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md) keeps governing public claims until a ticket in the new map replaces specific rows. Tickets FARMER-CALL-04, -05 and -06 stay open as written; the new map folds their questions into its own tickets.
+> **Superseded for future scope on 2026-11-07.** The user replaced the November 10 browser-demo scope with a full-application target by the same date, "or as close as possible". Planning for that now lives in [Plan the full G-One application for November 10](NISHANT_DOCS/FULL-APP-WAYFINDER.md). Everything below is kept as history exactly as written on its dates: its decisions, status notes and fog describe the browser-demo effort and are not corrections. Two things carry over: the browser demo remains the built **fallback floor**, and the wording table in [FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md) keeps governing public claims until a ticket in the new map replaces specific rows. Tickets FARMER-CALL-04, -05 and -06 stay open as written; the new map folds their questions into its own tickets.
 
 ## Destination
 

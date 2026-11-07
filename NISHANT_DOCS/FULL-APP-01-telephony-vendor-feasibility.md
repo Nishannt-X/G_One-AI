@@ -17,9 +17,9 @@ Research (AFK): read documentation and dated pricing pages only. **No sign-ups, 
 
 ## Already known (from the repo, dated 2026-11-06, not re-verified)
 
-- [FARMER-CALL-01](FARMER-CALL-01-telephony-gate.md): browser WebSocket over mobile data was chosen because no free PSTN path was verified. A Twilio trial blocks `<Stream>`; a paid Twilio account could place separate legs with their own Media Stream WebSockets; India destinations were recorded as needing a non-Indian caller ID and outbound permission; a Vonage trial reaches only its registered number by Voice; Exotel streaming needs KYC and approval; Plivo's India domestic path needs an India-registered business. A per-minute figure was recorded for Twilio.
-- [FARMER-CALL-05](FARMER-CALL-05-account-probe.md): the paid-account probe task is open and was off the old route. This ticket decides whether it comes back.
-- The legacy Twilio prototype is tracked but **excluded from compilation**; it is a reference, not a constraint ([DECISIONS](DECISIONS.md), 2026-11-06).
+- [FARMER-CALL-01](../FARMER-CALL-01-telephony-gate.md): browser WebSocket over mobile data was chosen because no free PSTN path was verified. A Twilio trial blocks `<Stream>`; a paid Twilio account could place separate legs with their own Media Stream WebSockets; India destinations were recorded as needing a non-Indian caller ID and outbound permission; a Vonage trial reaches only its registered number by Voice; Exotel streaming needs KYC and approval; Plivo's India domestic path needs an India-registered business. A per-minute figure was recorded for Twilio.
+- [FARMER-CALL-05](../FARMER-CALL-05-account-probe.md): the paid-account probe task is open and was off the old route. This ticket decides whether it comes back.
+- The legacy Twilio prototype is tracked but **excluded from compilation**; it is a reference, not a constraint ([DECISIONS](../DECISIONS.md), 2026-11-06).
 - The student team has a Gnani challenge account. Its credit balance and concurrency limits are unknown.
 
 ## Sub-questions
