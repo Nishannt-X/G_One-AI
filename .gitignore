@@ -14,3 +14,11 @@ target/
 *.key
 *.p12
 *.jks
+
+# Historical docs (distilled into dump/LEGACY-NOTES.md; originals are in git history at 2d606e8)
+dump/legacy-docs/
+
+# Web
+node_modules/
+web/dist/
+.env.local

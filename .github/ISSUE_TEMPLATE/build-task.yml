@@ -1,0 +1,34 @@
+name: Build task
+description: One agent-sized piece of implementation work
+labels: ["type:build"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What exists when this is done, in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: owns
+    attributes:
+      label: Owns
+      description: Paths this issue may change. Anything else needs a comment first.
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: Spec
+      description: Interfaces, behaviour, references (CONTEXT.md terms, ADRs, dump/LEGACY-NOTES.md sections).
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: Checkable criteria, including exact commands.
+    validations:
+      required: true
+  - type: textarea
+    id: out
+    attributes:
+      label: Out of scope

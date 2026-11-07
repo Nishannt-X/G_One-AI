@@ -1,0 +1,14 @@
+name: Idea
+description: A feature idea to discuss (Discussions are off)
+labels: ["idea"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it helps the demo or the farmer
