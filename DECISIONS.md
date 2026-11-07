@@ -2,6 +2,29 @@
 
 Newest first.
 
+## 2026-11-07 · Supersede the November 10 browser-demo scope with a full-application target (planning only)
+- **Status:** accepted as direction; every design question under it is open.
+- **Context:** The user replaced the scope frozen in [FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md) with
+  the full application by 2026-11-10, "or as close as possible", and named eight areas to decide: caller-ID profile and
+  lookup, advisory RAG and consent-to-match, language, continuous streaming on both legs, bilateral shield escalation,
+  per-phone memory and privacy, telephony and vendor feasibility, and the integrated Nov 10 route. The user asked for
+  planning only through the wayfinder, with no feature implementation, services or external API calls.
+- **Options considered:** A) Keep the browser-demo scope and treat the new asks as extras. B) Chart a new wayfinder map
+  with decision tickets, mark the old map superseded for future scope, and keep its history. C) Start building the full
+  app straight away (rejected: nothing about how the areas should behave has been decided, and several would break
+  standing decisions on storage, dependencies and wording).
+- **Decision:** B. [FULL-APP-WAYFINDER](FULL-APP-WAYFINDER.md) holds the map, ten open tickets and a
+  [requirements register](FULL-APP-REQUIREMENTS.md) that separates user-approved items, carried-forward decisions,
+  built status and open design. [FARMER-CALL-WAYFINDER](FARMER-CALL-WAYFINDER.md) gets a superseded banner and
+  front-matter fields only; its body and the earlier entries here stand as written. The browser demo stays the fallback
+  floor. The Say / never say table in FARMER-CALL-07 keeps governing public claims until a ticket replaces specific rows.
+- **Consequences:** No code, dependency, config or endpoint changes. "Shield", "blocks", "phone call" and "real time"
+  stay unavailable for public wording. Storage, retrieval and telephony each will need their own entry and the user's
+  approval before anything is built. The decision work itself consumes part of the three days left, so the map
+  recommends running both research tickets first and opening the route ticket early in triage mode. Nothing in the new
+  documents is verified against a running service.
+- **Decided by:** human (direction and scope) / agent (map structure and wording) · **Related:** [map](FULL-APP-WAYFINDER.md)
+
 ## 2026-11-07 · Harden the cautions after security review: receiving-money scams, wording, honesty, clip probing
 - **Status:** accepted (hackathon scope); classifier quality still unverified against the live model.
 - **Context:** Review of the bilateral cautions found: (P2) a request to *type* a PIN or OTP, or to approve a UPI collect
