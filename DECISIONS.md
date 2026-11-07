@@ -2,6 +2,31 @@
 
 Newest first.
 
+## 2026-11-07 · Bilateral private cautions: threat, secret request, secret said aloud
+- **Status:** accepted (hackathon scope); classifier quality unverified against the live model.
+- **Context:** The farmer-only threat caution left the buyer with nothing when the farmer pressured them, and nobody
+  was warned about the most common scam shape in this setting: someone asking for an OTP or PIN, or a person reading
+  one out loud in a translated call. Translation had to stay unchanged and a spoken secret must never be copied
+  anywhere new.
+- **Options considered:** A) Keep farmer-only. B) Add a second classifier call per caution kind. C) One classifier call
+  per turn that answers all three questions, with fixed wording per kind and per recipient. D) Redact or withhold the
+  secret from the translation (rejected: the app would be editing what people say, and cannot know the secret is real).
+  E) Let the model write the caution (rejected: it could echo the secret and over-promise safety). For voice keys:
+  F) keep `w-<turnId>` (rejected: the other person knows the turn id and could probe for the clip). G) a random suffix.
+- **Decision:** C and G. `Caution` holds the kinds, the recipient rule (threat and request go to the listener, a
+  secret said aloud goes to the speaker) and the fixed English wording; `AdvisoryService.cautionAsync` runs after the
+  turn is delivered, for both roles. Only an explicit `"threat"` or a JSON `true` counts. "Secret" is limited to an OTP
+  or one-time code, PIN, password, card CVV and a full Aadhaar number; UPI IDs, account numbers and IFSC codes are
+  named in the prompt as not secrets, because they are given to be paid. The caution event carries a `kind` and a
+  per-kind `id`, so several cautions in one turn do not collapse in the page. The price advice stays buyer-turn only.
+  No new dependency.
+- **Consequences:** One classifier call per turn now runs on farmer turns too. False negatives and positives are
+  possible and untested against the live model, especially in Hindi, Tamil and Kannada and for digits spoken as words.
+  Nobody is told when the check could not run. The speaker of a secret is warned after the other side already received
+  the translation, so the wording says to assume they have it; the app cannot take it back. Cautions are not
+  filtered from replay for their own recipient: a reconnect shows each person their own cautions again.
+- **Decided by:** agent (human assigned the scope) · **Related:** [DEMO](DEMO.md), [FARMER-CALL-07](FARMER-CALL-07-nov10-architecture-scope.md)
+
 ## 2026-11-07 · Home page and same-origin demo stage; the app moves to app.html
 - **Status:** accepted (prototype); the stage is checked in headless Chrome and with Node, not on a real phone.
 - **Context:** The human asked for a polished G-One site (hero, two embedded phone demos, live pipeline, in the manner of

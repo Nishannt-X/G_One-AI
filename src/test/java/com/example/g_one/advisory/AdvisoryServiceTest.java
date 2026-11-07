@@ -60,17 +60,6 @@ class AdvisoryServiceTest {
     }
 
     @Test
-    void onlyAnExplicitThreatStatusTriggersTheWarning() throws Exception {
-        ObjectMapper json = new ObjectMapper();
-        assertThat(AdvisoryService.isThreat(json.readTree("{\"status\":\"threat\"}"))).isTrue();
-        assertThat(AdvisoryService.isThreat(json.readTree("{\"status\":\" Threat \"}"))).isTrue();
-        assertThat(AdvisoryService.isThreat(json.readTree("{\"status\":\"none\"}"))).isFalse();
-        assertThat(AdvisoryService.isThreat(json.readTree("{\"status\":\"unclear\"}"))).isFalse();
-        assertThat(AdvisoryService.isThreat(json.readTree("{\"status\":null}"))).isFalse();
-        assertThat(AdvisoryService.isThreat(json.readTree("{}"))).isFalse();
-    }
-
-    @Test
     void riceOfferIsComparedWithTheConfiguredVarietyAndNamesIt() {
         String text = svc.compose(offer("clear", "rice", "Common", "Burdwan mandi", "3000", "INR", "quintal"), RICE);
         assertThat(text).contains("AGMARKNET listed ₹3,400 per quintal for Common rice at Burdwan APMC on 4 November 2026")

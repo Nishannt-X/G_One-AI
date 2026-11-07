@@ -101,6 +101,7 @@ public class TurnService {
             room.record(event);
             hub.broadcast(room, event);
 
+            advisory.cautionAsync(room, turnId, speaker, transcript, from);
             if (speaker == Role.BUYER) advisory.adviseAsync(room, turnId, turnSeq, transcript, from);
             agreement.turnAsync(room, turnId, turnSeq, speaker, transcript, from,
                     received.minusMillis((long) (seconds * 1000)));
