@@ -1,0 +1,51 @@
+# 👑 G-ONE AI: Master Backend Architecture & Copilot Directives
+
+## 1. Master Directive for GitHub Copilot
+**Role:** You are an Expert Enterprise Java Software Architect specializing in AI orchestration, FinTech integrations, and ultra-low latency WebSockets.
+**Task:** We are building the core Spring Boot backend for "G-One AI" - a multi-tenant Voice OS for Indian businesses. You will generate code that is production-ready, strictly typed, fully commented, and utilizes Java 21 Virtual Threads (Project Loom) for massive concurrency.
+
+**Tech Stack:**
+* Java 21 & Spring Boot 3.2+
+* Spring Web & Spring WebSockets (for Twilio Audio Streaming)
+* Spring Data JPA & MySQL 8.0+ (for Multi-Tenant data)
+* Redis (for conversational memory caching)
+* External APIs: Twilio, Deepgram (STT), Anthropic Claude 3.5 (LLM), ElevenLabs (TTS), Razorpay (UPI).
+
+## 2. The Multi-Tenant Database Schema (Entities)
+When prompted to generate entities, refer to this structure. **CRITICAL:** Because we are using MySQL, any JSON fields must use the native MySQL JSON column type.
+1. `Organization`: id, name, industry, contact_phone.
+2. `TwilioNumber`: id, organization_id, phone_number. (Maps incoming calls to the business).
+3. `AiConfig`: id, organization_id, system_prompt, knowledge_base_json (Must be mapped as `@Column(columnDefinition = "JSON")`).
+4. `CallLog`: id, organization_id, customer_phone, twilio_call_sid, transcript, booking_confirmed, payment_link.
+
+## 3. Core Modules to Implement (Iterative Steps)
+
+### Step 1: The Telephony Handshake (`TwilioWebhookController`)
+* Create a REST endpoint `/api/voice/incoming`.
+* When Twilio POSTs to this endpoint, extract the `To` number.
+* Query the DB to find the `Organization`.
+* Return standard XML (TwiML) instructing Twilio to open a WebSocket connection to `wss://[our-domain]/api/voice/stream`.
+
+### Step 2: The Audio WebSocket Pipeline (`TwilioAudioWebSocketHandler`)
+* Implement `TextWebSocketHandler` to handle Twilio's live audio stream.
+* Handle Twilio's specific JSON payloads (`Connected`, `Start`, `Media`, `Stop`).
+* **Crucial:** Decode the inbound base64 mu-law audio from the `Media` payload and route it to the AI Orchestration Layer.
+
+### Step 3: The AI Orchestration Service (`VoiceAiOrchestratorService`)
+* **Listen:** Stream inbound audio bytes to the Deepgram WebSocket API for sub-300ms transcription.
+* **Think:** Send the transcribed text + the Organization's specific `system_prompt` to Anthropic Claude 3.5 Sonnet. Instruct Claude to output a final JSON block if a booking is made.
+* **Speak:** Stream Claude's text response to the ElevenLabs API, receive the audio bytes, encode them back to base64 mu-law, and send them down the Twilio WebSocket.
+
+### Step 4: The FinTech & Delivery Layer (`PaymentAndNotificationService`)
+* Detect the JSON output from Claude (e.g., `{intent: "booking", amount: 500}`).
+* Call the Razorpay Payment Links API to generate a UPI link.
+* Call the WhatsApp Business API to send the final receipt and UPI link to the customer's phone number.
+
+### Step 5: The Human-in-the-Loop (HITL) WebSocket (`DashboardWebSocketConfig`)
+* Create a secondary WebSocket endpoint `/ws/dashboard`.
+* Push real-time call transcripts and "Escalation Alerts" (from Sentiment Shield) to the Next.js React frontend so the business owner can monitor live calls.
+
+## 4. Coding Standards
+* Use `@Transactional` strictly for database writes (especially in the FinTech layer).
+* Handle exceptions gracefully. If Deepgram or ElevenLabs fails, fallback to a pre-recorded Twilio TwiML message ("Sorry, we are experiencing technical difficulties, please try again.").
+* Use SLF4J for extensive logging. Tag logs with the `TwilioCallSid` for easy tracing.

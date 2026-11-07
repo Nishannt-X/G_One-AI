@@ -1,0 +1,16 @@
+target/
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Local credentials and environment-specific Spring configuration.
+.env
+.env.*
+!.env.example
+**/application.properties
+**/application-*.properties
+*.pem
+*.key
+*.p12
+*.jks
