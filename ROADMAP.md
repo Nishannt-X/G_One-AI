@@ -29,12 +29,14 @@ by" issues are closed. Assignees on GitHub follow the lane owner. `area:*` label
 
 | Lane | Areas | Build issues, in order | Decisions it drives |
 | --- | --- | --- | --- |
-| **Call path**: getting audio in and out of real phones | `telephony`, `speech`, `infra` | #16 runtime, #17 Twilio inbound + stream, #18 speech adapter, #25 buyer leg, #33 Bengali | #34 telephony alternatives, #6 go/no-go, #7 Gnani probe, #10 runtime |
-| **Brain and memory**: what the assistant says and remembers | `core`, `agent`, `memory` | #14 contracts, #23 call pipeline, #19 agent brain, #20 memory, #24 buyers, #26 mediation, #27 deal summary | #8 call flow, #9 memory |
-| **Console and launch**: what judges and viewers see | `web`, `launch` | #15 CI, #21 console v1, #22 simulator, #28 console v2, #29 rehearse, #30 video, #31 posts, #32 submission | #11 demo and post plan, #12 cut line |
+| **Call path** (unassigned; starts after the provider pick in #6, except #16 and #18) | `telephony`, `speech`, `infra` | #16 runtime, #17 Twilio inbound + stream, #18 speech adapter, #25 buyer leg, #33 Bengali | #34 telephony alternatives, #6 go/no-go, #7 Gnani probe, #10 runtime |
+| **Brain and memory** (Nikhil, `Sah-Nikhil`) | `core`, `agent`, `memory` | #14 contracts, #23 call pipeline, #19 agent brain, #20 memory, #24 buyers, #26 mediation, #27 deal summary | #8 call flow, #9 memory |
+| **Console and launch** (Nishant, `Nishannt-X`) | `web`, `launch` | #15 CI, #21 console v1, #22 simulator, #28 console v2, #29 rehearse, #30 video, #31 posts, #32 submission | #11 demo and post plan, #12 cut line |
 
-#13 (restructure) comes before all lanes. With two people, one person takes **Call path** and the other **Brain and
-memory**; **Console and launch** work goes to whoever has free agent capacity, and both share the video and posts.
+#13 (restructure) comes before all lanes. Owners decided 2026-11-07: Nikhil drives Brain and memory, Nishant drives
+Console and launch, each with agents in worktrees off `main`. Call path is picked up once #6 names the telephony
+provider; #16 (runtime) and #18 (Gnani speech adapter) do not depend on the provider and can start earlier by whoever
+has free agents. Both share the video and posts.
 
 ## Phase 0: Foundation (milestone P0, due Nov 8, 13:00)
 
