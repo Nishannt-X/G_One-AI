@@ -91,6 +91,9 @@ assert.equal(d.received, 'Received by: Farmer seat');
 const both = core.describe({ type: 'agreement_final', seats: ['farmer', 'buyer'], meta: { delivery: 'not_sent' } });
 assert.equal(both.received, 'Received by: Farmer seat and Buyer seat');
 assert.equal(both.detail, 'WhatsApp copy not sent');
+// agreement_readback proves the seat received the read-back, not that it was played or heard.
+assert.equal(core.EVENTS.agreement_readback.label, 'Read-back received');
+assert.equal(core.describe({ type: 'agreement_readback', seats: ['farmer'], meta: {} }).title, 'Read-back received');
 for (const k of Object.keys(core.EVENTS)) {
   const text = core.EVENTS[k].label.toLowerCase();
   assert.ok(!/intercept|block|shield|protect|safe|real.?time|instant|locked/.test(text), 'no claim words in ' + k);

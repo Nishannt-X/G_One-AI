@@ -16,7 +16,7 @@
     advisory: { lamp: 'advice', label: 'Private advice' },
     warning: { lamp: 'caution', label: 'Private caution' },
     agreement: { lamp: 'agreement', label: 'Agreement state' },
-    agreement_readback: { lamp: 'agreement', label: 'Terms read back' },
+    agreement_readback: { lamp: 'agreement', label: 'Read-back received' },
     agreement_retry: { lamp: 'agreement', label: 'Asked to confirm again' },
     agreement_notice: { lamp: 'agreement', label: 'Agreement notice' },
     agreement_final: { lamp: 'agreement', label: 'Nonbinding summary' },
