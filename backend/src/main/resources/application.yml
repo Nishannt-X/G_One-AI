@@ -1,0 +1,44 @@
+# All secrets and provider choices come from environment variables; see .env.example at the repo root.
+spring:
+  application:
+    name: g_one
+
+server:
+  port: ${PORT:8080}
+  # Honour X-Forwarded-* from the HTTPS tunnel/proxy so same-origin WebSocket checks pass.
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-stacktrace: never
+
+g-one:
+  # code:label:voice, comma separated. Codes/voices must exist for the chosen Timbre model.
+  languages: ${G_ONE_LANGUAGES:hi-IN:Hindi:Nalini,en-IN:English:Kaveri,ta-IN:Tamil:Asmita,kn-IN:Kannada:Saanvi}
+  # Blank = the bundled dated sample (src/main/resources/mandi-snapshot.sample.json).
+  mandi-snapshot-file: ${G_ONE_MANDI_SNAPSHOT_FILE:}
+  # Live AGMARKNET price for ONE variety at ONE market. Blank = off (the dated snapshot above is used). Set all six
+  # identifying values together. Cannot be combined with a snapshot file.
+  agmarknet:
+    base-url: ${G_ONE_AGMARKNET_BASE_URL:https://api.agmarknet.gov.in}
+    market-id: ${G_ONE_AGMARKNET_MARKET_ID:}
+    state-id: ${G_ONE_AGMARKNET_STATE_ID:}
+    commodity-id: ${G_ONE_AGMARKNET_COMMODITY_ID:}
+    commodity: ${G_ONE_AGMARKNET_COMMODITY:}
+    market: ${G_ONE_AGMARKNET_MARKET:}
+    variety: ${G_ONE_AGMARKNET_VARIETY:}
+    timeout-seconds: ${G_ONE_AGMARKNET_TIMEOUT_SECONDS:5}
+    max-age-days: ${G_ONE_AGMARKNET_MAX_AGE_DAYS:3}
+    cache-minutes: ${G_ONE_AGMARKNET_CACHE_MINUTES:30}
+  gnani:
+    base-url: ${GNANI_BASE_URL:https://api.vachana.ai}
+    api-key: ${GNANI_API_KEY:}
+    # Empty = omit the field, which the Prisma docs define as the default model (v2.5).
+    stt-model: ${GNANI_STT_MODEL:}
+    tts-model: ${GNANI_TTS_MODEL:timbre-v2.5}
+    timeout-seconds: ${GNANI_TIMEOUT_SECONDS:30}
+  llm:
+    # Any OpenAI-compatible /chat/completions endpoint. No provider or model is assumed.
+    base-url: ${G_ONE_LLM_BASE_URL:}
+    api-key: ${G_ONE_LLM_API_KEY:}
+    model: ${G_ONE_LLM_MODEL:}
+    timeout-seconds: ${G_ONE_LLM_TIMEOUT_SECONDS:30}

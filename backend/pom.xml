@@ -13,7 +13,7 @@
     <artifactId>g_one</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>g_one</name>
-    <description>G-One two-phone browser farmer-buyer translation demo (prototype)</description>
+    <description>G-One phone-call voice middleman for Indian farmers (backend)</description>
 
     <properties>
         <java.version>21</java.version>
@@ -54,20 +54,6 @@
             </testResource>
         </testResources>
         <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <configuration>
-                    <!-- The earlier Twilio prototype (com.example.g_one_legacy) may still sit untracked in a local
-                         checkout as reference; it is not part of this build. -->
-                    <excludes>
-                        <exclude>com/example/g_one_legacy/**</exclude>
-                    </excludes>
-                    <testExcludes>
-                        <testExclude>com/example/g_one_legacy/**</testExclude>
-                    </testExcludes>
-                </configuration>
-            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

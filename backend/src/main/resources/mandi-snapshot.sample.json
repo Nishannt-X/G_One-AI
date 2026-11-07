@@ -1,0 +1,12 @@
+{
+  "sourceName": "AGMARKNET",
+  "sourceUrl": "https://api.agmarknet.gov.in/v1/prices-and-arrivals/market-price/lastweek?marketId=161&stateId=20&commodityId=23&includeExcel=false",
+  "capturedAt": "2026-11-06",
+  "priceDate": "2026-11-04",
+  "commodity": "Onion",
+  "variety": "Red",
+  "market": "Lasalgaon",
+  "price": 4500,
+  "currency": "INR",
+  "unit": "quintal"
+}

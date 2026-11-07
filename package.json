@@ -1,0 +1,10 @@
+{
+  "name": "g-one",
+  "private": true,
+  "workspaces": ["web"],
+  "scripts": {
+    "typecheck": "bun run --cwd web typecheck",
+    "lint": "bun run --cwd web lint",
+    "test": "cd backend && ./mvnw -q test"
+  }
+}
