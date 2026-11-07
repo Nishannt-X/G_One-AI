@@ -3,8 +3,8 @@
 Newest first.
 
 ## 2026-11-07 · Record the relayed full-app requirements as fixed inputs; design stays open
-- **Status:** accepted as direction; the wording of the added items awaits the user's confirmation. Every design
-  question under them is open.
+- **Status:** accepted; the user confirmed the whole list on 2026-11-07 ("all this is what we are making"). Every
+  design question under it is open.
 - **Context:** The [requirements register](FULL-APP-REQUIREMENTS.md) fixes three behaviours (zero intake for a known
   caller, mandatory crop-specific storage RAG, one buyer offer with a spoken yes first). The user's latest list, relayed
   to the orchestrator on 2026-11-07, is wider: lookup/cache first with a short fallback question, per-user languages with
@@ -12,7 +12,7 @@ Newest first.
   second, bilateral private spoken cautions with escalation **as a proposal**, and per-phone structured memory with
   provenance and privacy. A second team needs one place that says what is fixed and what is not.
 - **Options considered:** A) Leave the register as it is and let each reader reconcile. B) Rewrite the register and the
-  tickets now (rejected for this change: larger edit, and the added wording is not yet confirmed by the user). C) Record
+  tickets now (rejected for this change: a larger edit than this docs fix). C) Record
   the split here and in the standalone [teammate handoff](TEAMMATE-HANDOFF-2026-11-07.md) and leave the register and
   tickets as written.
 - **Decision:** C. These are fixed inputs, in the same sense as register items 5 to 7: a ticket decides how, never
@@ -27,7 +27,7 @@ Newest first.
   a person's call needs the user's explicit approval), consent, retention, deletion, disclosure and the Nov 10 cut line.
   Where this entry and the register's sentence "the rest of how the eight areas behave is not approved" differ for these
   items, this entry governs; the register and tickets 03, 04, 05 and 09 are not edited here and should be reconciled
-  once the user confirms the wording.
+  in a later change.
 - **Consequences:** No code, dependency, configuration or endpoint change, and no external call. The one-second figure is
   a target, not a measurement: "real time" and "instant" stay on the never-say list until it is measured on the phones
   that will be filmed. Caller ID still is not identity. Dependencies, schemas and stores still need their own entry and
