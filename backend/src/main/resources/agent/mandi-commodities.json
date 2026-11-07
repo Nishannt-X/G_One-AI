@@ -1,0 +1,17 @@
+{
+  "_comment": "Crop and market names the mandi tool understands, mapped to AGMARKNET's spelling. Aliases cover how farmers say them and how Prisma may write them (romanised Hindi, Devanagari, Bengali). Matching ignores case, spaces, dots and hyphens. A price is only ever given for the one commodity, variety and market MandiSource is configured for; this list only recognises what the farmer asked about.",
+  "commodities": [
+    {"name": "Onion", "aliases": ["pyaz", "pyaaz", "piyaz", "piyaaz", "kanda", "प्याज", "प्याज़", "कांदा", "পেঁয়াজ", "পিঁয়াজ"]},
+    {"name": "Rice", "aliases": ["chawal", "chaval", "चावल", "চাল"]},
+    {"name": "Paddy", "aliases": ["dhan", "dhaan", "धान", "ধান"]},
+    {"name": "Potato", "aliases": ["aloo", "alu", "आलू", "আলু"]},
+    {"name": "Tomato", "aliases": ["tamatar", "टमाटर", "টমেটো"]},
+    {"name": "Wheat", "aliases": ["gehun", "gehu", "gehoon", "गेहूं", "गेहूँ", "গম"]},
+    {"name": "Soyabean", "aliases": ["soybean", "soya", "सोयाबीन"]},
+    {"name": "Cotton", "aliases": ["kapas", "कपास", "তুলা"]}
+  ],
+  "markets": [
+    {"name": "Lasalgaon", "aliases": ["Lasalgaon APMC", "लासलगांव", "लासलगाँव"]},
+    {"name": "Burdwan APMC", "aliases": ["Burdwan", "Bardhaman", "बर्धमान", "বর্ধমান"]}
+  ]
+}
