@@ -4,12 +4,15 @@ const TARGET_RATE = 16000;
 const S = {
   cfg: null, roomId: null, token: null, role: null, ws: null, wsGen: 0, people: [], busy: false,
   events: [], rec: null, timer: null, lastWav: null, uploading: false, player: null, queue: [], playing: false,
-  current: null, stopPlayback: null,
+  current: null, stopPlayback: null, seat: null, embed: false,
 };
+// Two same-origin frames of one tab share one sessionStorage. A demo-stage frame is told its seat in the URL, so its saved
+// token never collides with the other seat's. No seat means a plain tab, which keeps the original key and room links.
+const SEATS = ['farmer', 'buyer'];
 
 const label = (code) => (S.cfg.languages.find((l) => l.code === code) || { label: code }).label;
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-const storeKey = () => 'g_one:' + S.roomId;
+const storeKey = () => 'g_one:' + S.roomId + (S.seat ? ':' + S.seat : '');
 // Before the rename the key was 'aisetu:<room>'. A tab opened then still holds its token under that key, so read it once
 // and move it, or a reload after the upgrade would lose the seat in the room.
 const legacyStoreKey = () => 'aisetu:' + S.roomId;
@@ -18,7 +21,7 @@ const store = {
     try {
       const current = sessionStorage.getItem(storeKey());
       if (current !== null) return JSON.parse(current);
-      const former = sessionStorage.getItem(legacyStoreKey());
+      const former = S.seat ? null : sessionStorage.getItem(legacyStoreKey());
       if (former === null) return null;
       const saved = JSON.parse(former);
       try { sessionStorage.setItem(storeKey(), former); sessionStorage.removeItem(legacyStoreKey()); } catch (e) { /* still usable this time */ }
@@ -51,12 +54,18 @@ function fillLanguages(sel, selected) {
 
 async function init() {
   S.cfg = await (await fetch('/api/config')).json();
-  S.roomId = new URLSearchParams(location.search).get('room');
+  const params = new URLSearchParams(location.search);
+  S.roomId = params.get('room');
+  S.seat = SEATS.includes(params.get('seat')) ? params.get('seat') : null;
+  S.embed = !!S.seat && window.parent !== window;
+  if (S.embed) document.body.classList.add('embed');
   fillLanguages($('langSel'));
   if (S.roomId) {
     const saved = store.get();
-    if (saved) { S.token = saved.token; S.role = saved.role; return enterRoom(); }
+    // A seat only ever enters as its own role, whatever an edited storage entry says.
+    if (saved && (!S.seat || saved.role === S.seat)) { S.token = saved.token; S.role = saved.role; return enterRoom(); }
   }
+  if (S.seat) { $('seatless').hidden = false; return; }
   $('landing').hidden = false;
   $('roleRow').hidden = !!S.roomId;
   $('codeRow').hidden = !!S.roomId || !S.cfg.accessCodeRequired;
@@ -115,7 +124,7 @@ function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${location.host}/ws?room=${encodeURIComponent(S.roomId)}&token=${encodeURIComponent(S.token)}`);
   S.ws = ws;
-  ws.onopen = () => { $('conn').textContent = 'Connected'; };
+  ws.onopen = () => { $('conn').textContent = 'Connected'; tell({ kind: 'conn', state: 'open' }); };
   ws.onmessage = (m) => onMessage(JSON.parse(m.data));
   ws.onclose = (ev) => {
     if (gen !== S.wsGen) return;
@@ -123,9 +132,11 @@ function connect() {
       store.clear(); S.token = null;
       $('conn').textContent = 'Session ended';
       setStatus('This room has expired. Ask for a new link.');
+      tell({ kind: 'conn', state: 'ended' });
       return refresh();
     }
     $('conn').textContent = 'Reconnecting…';
+    tell({ kind: 'conn', state: 'reconnecting' });
     setTimeout(() => { if (gen === S.wsGen) connect(); }, 1500);
   };
 }
@@ -176,7 +187,25 @@ function onMessage(m) {
       break;
     default: break;
   }
+  // Only live events are reported; the `state` snapshot replays history and must not look like new activity, and
+  // presence is not a pipeline event.
+  if (m.type !== 'state' && m.type !== 'presence') tell({ kind: 'event', type: m.type, key: eventKey(m), meta: eventMeta(m) });
   refresh();
+}
+
+// ---- demo stage ------------------------------------------------------------
+// Inside a stage frame, tell the parent page (same origin only) which real events this seat received. Metadata only:
+// never transcripts, translations, tokens or audio links. The stage validates every field again.
+const META_FIELDS = ['speaker', 'sourceLanguage', 'targetLanguage', 'state', 'outcome', 'delivery', 'code'];
+function eventMeta(m) {
+  const meta = {};
+  for (const f of META_FIELDS) if (typeof m[f] === 'string') meta[f] = m[f];
+  return meta;
+}
+function tell(msg) {
+  if (!S.embed) return;
+  try { window.parent.postMessage(Object.assign({ source: 'g-one-seat', v: 1, seat: S.seat }, msg), location.origin); }
+  catch (e) { /* the stage is optional; the app works without it */ }
 }
 
 function refresh() {

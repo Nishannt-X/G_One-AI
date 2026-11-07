@@ -2,6 +2,35 @@
 
 Newest first.
 
+## 2026-11-07 · Home page and same-origin demo stage; the app moves to app.html
+- **Status:** accepted (prototype); the stage is checked in headless Chrome and with Node, not on a real phone.
+- **Context:** The human asked for a polished G-One site (hero, two embedded phone demos, live pipeline, in the manner of
+  the Maatu page) with an original identity, farmer and buyer as one featured use case, reusing the existing app and
+  room APIs, keeping old room URLs, and showing no mock activity as live. No database, dependency, SMS or safety logic
+  in this slice.
+- **Options considered:** A) Keep the app at `/` and put the site elsewhere. B) Rebuild the app inside the home page.
+  C) Move the static app to `app.html`, add a home page at `/`, frame the unchanged app twice from a stage script.
+  For seat credentials: D) tokens in the iframe URL (rejected: a token in a URL lands in history and logs).
+  E) The stage writes per-seat sessionStorage entries the frames read. For old links: F) a client-side redirect from the
+  home page. G) A server-side forward. For reports to the rail: H) the stage polls or opens its own sockets (rejected:
+  duplicates auth and would need both tokens in the stage logic). I) Each seat frame `postMessage`s metadata to the
+  stage.
+- **Decision:** C, E, G, I. Old `index.html` became `app.html` (git rename). `RoomLinkFilter` forwards `GET /` and
+  `/index.html` with `room` to `/app.html`; it is a filter because a controller mapping with `params = "room"` made a
+  plain `/` return 400. `securityHeaders` is ordered first so forwarded pages keep the headers. CSP `frame-ancestors`
+  went from `'none'` to `'self'`. `app.js` gained an optional `seat` URL parameter (storage key `g_one:<room>:<seat>`,
+  own role only, no join form) and metadata-only reports to its parent; without `seat` it behaves as before, including
+  the `aisetu:` token migration. The stage validates origin, source window and field shapes; the seat comes from the
+  window. No new dependency, endpoint, config, database or paid call; the access code still guards room creation through
+  the same endpoint. Pure stage logic sits in `stage-core.js` so Node can test it.
+- **Consequences:** Two seats in one browser share a microphone and speakers, so the stage is a demonstration of the
+  flow and the private lanes, not a substitute for the two-phone run, and says so on the page. `/` no longer opens the
+  app: anyone who bookmarked bare `/` to create a room lands on the home page (one click to `/app.html`). Anything on
+  this origin can now frame the pages; there is no third-party framing. Status badges and limits on the page are copy
+  that must be kept in line with DEMO.md and FARMER-CALL-07 by hand (a test bans the "never say" wording). The page
+  names Gnani Prisma and Timbre and AGMARKNET as in DEMO.md; no brand assets from other sites are used.
+- **Decided by:** human (scope), agent (design) · **Related:** [DEMO](DEMO.md#home-page-and-demo-stage)
+
 ## 2026-11-07 · Rename the project to G-One, keeping old configuration names as fallbacks
 - **Status:** accepted
 - **Context:** The project moved from the AI-Setu and Voxora names to G-One. Deployments already hold secrets under

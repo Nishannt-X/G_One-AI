@@ -29,7 +29,7 @@ converter is follow-up work. Spring Boot 3.5.5 is downloaded from Maven Central 
 cp .env.example .env        # fill in values; .env is git-ignored
 set -a; . ./.env; set +a
 mvn spring-boot:run         # http://localhost:8080
-mvn test                    # 114 tests, no network or credentials needed
+mvn test                    # 149 tests, no network or credentials needed (JS checks run under Node if installed)
 ```
 
 Without credentials the app still starts; creating/joining rooms works and a turn returns `not_configured`.
@@ -58,13 +58,51 @@ you control (for example a Cloudflare Tunnel or ngrok; this repo does not bundle
 first shows a browser warning page (`ERR_NGROK_6024`) on each phone; tap **Visit Site** to continue. Then:
 
 1. Set `G_ONE_ACCESS_CODE` first: anyone with the public URL could otherwise create rooms and spend your credits.
-2. Phone A opens the HTTPS URL, picks role + language, taps **Create room**, and sends the shown link to Phone B.
+2. Phone A opens `<HTTPS URL>/app.html` (the plain app; `/` is the home page with the demo stage), picks role + language,
+   taps **Create room**, and sends the shown link to Phone B. Links of the form `<HTTPS URL>/?room=<id>` still open the
+   app, so rooms shared before the home page existed keep working.
 3. Phone B opens the link, picks a language, taps **Join** (it gets the other role).
 4. Take turns with the big button. If a turn fails, choose **Retry same recording** or **Record again**.
 5. If a phone blocks automatic playback, tap **▶ Play** on the message.
 
 Rooms live in server memory (single instance), expire after idle time, and are capped (`G_ONE_MAX_ROOMS`,
 `G_ONE_MAX_TURNS_PER_ROOM`). Use synthetic names and examples only; do not record real people or phone numbers.
+
+## Home page and demo stage
+
+`/` is the G-One home page (`index.html`): what the prototype is, a featured farmer and buyer use case with its status
+and limits, and a **live demo stage**. The plain two-phone app moved to `/app.html`; nothing about its behavior or APIs
+changed.
+
+- **Stage:** *Start a session* creates one room through the normal `POST /api/rooms` and `/join` calls (farmer first,
+  then buyer; it asks for the access code when `G_ONE_ACCESS_CODE` is set) and frames the real app twice, side by side,
+  as `/app.html?room=<id>&seat=farmer` and `&seat=buyer`. Both seats run in one browser, so they share its microphone
+  and speakers: use headphones and one speaker at a time. It is not the two-phone demo; for that use `/app.html` on two
+  phones. *End session* clears the seats from this tab. A reload in the same tab takes the seats back while the room
+  lives (rooms still expire on the server).
+- **Nothing is simulated.** The lamps and the event rail react only to events a seat received from the server
+  (`turn_started`, `turn`, `turn_failed`, `advisory`, `warning`, `agreement*`). Each rail entry names the seats that
+  reported it, so a private advisory or caution shows one seat only. The rail never carries transcripts, translations,
+  tokens or audio links. With no speech or translation credentials the stage says so and turns fail, as in the app. The
+  "how a turn moves" diagram on the page is static and labelled as such.
+- **Seats and storage.** Two same-origin frames of one tab share one `sessionStorage`, so a seat frame keeps its token
+  under `g_one:<room>:farmer` or `g_one:<room>:buyer` (the plain app still uses `g_one:<room>`). The stage writes those
+  entries; the token never travels in a URL. A seat entry whose saved role differs from the seat is ignored, and a seat
+  with no entry shows "This seat is not signed in" instead of joining.
+- **Messages.** A seat frame posts `{source: "g-one-seat", v: 1, seat, kind, ...}` to its parent with target origin set
+  to the page's own origin (never `*`). The stage accepts a message only if its origin is the page's and its source
+  window is one of the two seat frames, takes the seat from that window rather than from the message, and keeps only
+  whitelisted type names and short `[A-Za-z0-9_.:-]` values.
+- **Framing.** `Content-Security-Policy` now has `frame-ancestors 'self'` (was `'none'`): this site may frame its own
+  pages, nobody else may. The rest of the policy is unchanged (no inline script, no external hosts). `Permissions-Policy`
+  still allows the microphone for this origin only.
+- **Old links.** A `GET` of `/` or `/index.html` carrying `room` is forwarded to `app.html` (not redirected), so
+  `/?room=<id>` keeps its URL and the page script, share link and saved tokens work as before.
+- **Checked on 2026-11-07** in headless Chrome at 390, 820 and 1366 px wide against a local server with no credentials:
+  the stage starts, both seats load and connect, the rail starts empty, a reload resumes the seats, *End session*
+  clears them, no horizontal scroll. **Not checked:** a real turn through the frames (no credentials), the microphone
+  in a framed seat on a real phone or iOS Safari, autoplay of the listener's seat inside a frame (the seat shows
+  "Tap ▶ Play" if blocked), screen readers, and any browser other than Chrome.
 
 ## Renamed configuration
 
