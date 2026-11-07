@@ -25,7 +25,7 @@
     { id: 'capture', label: 'Speech in' },
     { id: 'delivered', label: 'Translated + voiced' },
     { id: 'advice', label: 'Farmer advice' },
-    { id: 'caution', label: 'Farmer caution' },
+    { id: 'caution', label: 'Private caution' },
     { id: 'agreement', label: 'Agreement' },
     { id: 'failed', label: 'Failure' },
   ];

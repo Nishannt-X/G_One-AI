@@ -444,7 +444,7 @@ class AgreementServiceTest {
 
     // ---- role isolation -------------------------------------------------------------------------------------------------
 
-    private static final String CAUTION = "Caution: the buyer's last words sounded like a threat";
+    private static final String CAUTION = "Caution: the buyer's earlier words sounded like a threat";
     private static final String REFERENCE = "AGMARKNET listed ₹4,500 per quintal for Red onion at Lasalgaon. That is a dated reference";
 
     @Test

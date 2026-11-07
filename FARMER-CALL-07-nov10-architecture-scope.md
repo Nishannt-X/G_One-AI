@@ -22,7 +22,7 @@ What exactly does the November 10 browser demo promise for its three pillars (tr
 | Pillar | Built | Verified | Not verified |
 | --- | --- | --- | --- |
 | Translation | yes | Two real phones, English→Hindi and Hindi→English, several-second recordings | Stop→audible latency; very short turns sometimes need a retry |
-| Private caution | yes, unit-tested with a fake model | no | Classifier against the live model and real Hindi speech |
+| Private caution | yes (2026-11-07: both roles; threat, secret request, secret said aloud), tested with a fake model | no | Classifier against the live model and real Hindi speech |
 | Market advice | live AGMARKNET fetch built | one read-only call and fakes | **Live app not restarted with it**; never run inside a phone call; Nov 10 data |
 | Agreement + WhatsApp | agreement built with a fake sender on 2026-11-07 (see [DEMO](DEMO.md#agreement-by-voice-nonbinding)); no WhatsApp sender | fakes only | live classifier, real phones, any real sender |
 
@@ -33,7 +33,7 @@ What exactly does the November 10 browser demo promise for its three pillars (tr
 ```text
 Phone ──turn (WAV)──> Prisma → translate → Timbre ──> listener hears it         (built)
                  └─ async, never blocks the turn:
-                    buyer turn  → threat check → farmer-only `warning`          (built)
+                    any turn    → caution check → `warning` to the one person it concerns   (built)
                     buyer turn  → offer read   → farmer-only `advisory`         (built)
                     [new] clear buyer offer    → room.openOffer = terms
                     [new] any turn while an offer is open → intent check (close | yes | no | none)
@@ -63,7 +63,7 @@ Summary content: crop, variety, market, price per unit (from the frozen terms), 
 | Say | Never say |
 | --- | --- |
 | "Two browsers on phones over mobile data" | "phone call", "PSTN", "works on any phone" |
-| "Each turn is translated and spoken to the other person; the farmer gets a private caution when the buyer's words sound like a threat" | "intercepts", "blocks", "drops", "filters", "shield", "protects the farmer", "zero-trust", "safe conversation" |
+| "Each turn is translated and spoken to the other person; either person can get a private caution when the other's words sound like a threat or intimidation, ask for an OTP, PIN, password, CVV, full card number or Aadhaar number (including to type a PIN or OTP to receive money), or when they say one aloud themselves" | "intercepts", "blocks", "drops", "filters", "shield", "protects the farmer", "zero-trust", "safe conversation" |
 | "AGMARKNET listed ₹X per quintal for Common rice at Burdwan APMC on <date>, a dated reference" | "today's price", "live rate", "modal", "fair price", "best price" |
 | "Both said yes by voice; a nonbinding summary went to WhatsApp (Twilio Sandbox, demo numbers)" | "smart contract", "legally binding", "verified identity", "locked deal", "secure agreement" |
 | Measured Stop-to-audible seconds from rehearsal | "real time", "instant" |
