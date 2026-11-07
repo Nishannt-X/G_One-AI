@@ -4,12 +4,14 @@ parent: FULL-APP-WAYFINDER.md
 labels: [wayfinder:grilling]
 status: open
 assignee: null
-blocked_by: [FULL-APP-01-telephony-vendor-feasibility.md, FULL-APP-02-gnani-streaming-and-language-facts.md, FULL-APP-03-language.md, FULL-APP-04-continuous-streaming.md, FULL-APP-05-per-phone-memory-privacy.md, FULL-APP-06-caller-id-profile-lookup.md, FULL-APP-07-advisory-rag.md, FULL-APP-08-consent-to-match.md, FULL-APP-09-bilateral-shield-escalation.md]
+blocked_by: []
+informed_by: [FULL-APP-01-telephony-vendor-feasibility.md, FULL-APP-02-gnani-streaming-and-language-facts.md, FULL-APP-03-language.md, FULL-APP-04-continuous-streaming.md, FULL-APP-05-per-phone-memory-privacy.md, FULL-APP-06-caller-id-profile-lookup.md, FULL-APP-07-advisory-rag.md, FULL-APP-08-consent-to-match.md, FULL-APP-09-bilateral-shield-escalation.md]
+closes_after: [FULL-APP-01-telephony-vendor-feasibility.md, FULL-APP-02-gnani-streaming-and-language-facts.md, FULL-APP-03-language.md, FULL-APP-04-continuous-streaming.md, FULL-APP-05-per-phone-memory-privacy.md, FULL-APP-06-caller-id-profile-lookup.md, FULL-APP-07-advisory-rag.md, FULL-APP-08-consent-to-match.md, FULL-APP-09-bilateral-shield-escalation.md]
 ---
 
 ## Question
 
-Given what tickets 01 to 09 decide, and a deadline of 2026-11-10, what is the single ordered route: which capabilities ship (the cut line), in what build order, behind what checkpoints, what fallback stays deployable, what acceptance runs prove each shipped capability, what the public video and submission may say, and what is explicitly after Nov 10?
+Given what tickets 01 to 09 decide (or, in triage mode, what is known so far), and a deadline of 2026-11-10, what is the single ordered route: which capabilities ship (the cut line), in what build order, behind what checkpoints, what fallback stays deployable, what acceptance runs prove each shipped capability, what the public video and submission may say, and what is explicitly after Nov 10?
 
 ## Type and mode
 
@@ -17,7 +19,7 @@ Grilling (HITL). The cut line is the user's decision. The agent presents the dep
 
 ## Early triage mode (recommended given the calendar)
 
-Today is 2026-11-07; the old plan froze features after Nov 8. The other nine tickets run one after another with a human in the loop, and building has to fit in what remains. The user may open this ticket **early**, once the two research tickets are back, to set a provisional cut line. Late tickets whose area falls below the line can then be skipped or reduced to a short decision. A provisional cut is revised when the other tickets resolve. This ticket is closed only when all its blockers are closed and the route is final.
+Today is 2026-11-07; the old plan froze features after Nov 8. Nothing blocks this ticket: it can be opened **at any time**, with whatever the other tickets have decided so far, to set a **provisional** cut line and a provisional build order. The other tickets keep running in parallel with a human in the loop. Triage decides what is *promised for Nov 10*. It does not remove a capability from the full target and it does not declare any ticket a blocker: the user-approved requirements ([register items 5 to 7](FULL-APP-REQUIREMENTS.md#a-approved-by-the-user-for-this-effort-user-now)) stay in the full target, and a capability that falls below the cut line is "after Nov 10, nothing promised", with its decision ticket still open. A provisional cut is revised as the other tickets resolve. This ticket is **closed** only when all tickets in `closes_after` are closed and the route is final.
 
 ## Known
 

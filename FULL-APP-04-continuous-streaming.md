@@ -4,7 +4,8 @@ parent: FULL-APP-WAYFINDER.md
 labels: [wayfinder:grilling]
 status: open
 assignee: null
-blocked_by: [FULL-APP-01-telephony-vendor-feasibility.md, FULL-APP-02-gnani-streaming-and-language-facts.md]
+blocked_by: [FULL-APP-02-gnani-streaming-and-language-facts.md]
+informed_by: [FULL-APP-01-telephony-vendor-feasibility.md]
 ---
 
 ## Question

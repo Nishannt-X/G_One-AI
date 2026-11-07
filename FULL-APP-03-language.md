@@ -5,6 +5,7 @@ labels: [wayfinder:grilling]
 status: open
 assignee: null
 blocked_by: [FULL-APP-02-gnani-streaming-and-language-facts.md]
+informed_by: [FULL-APP-06-caller-id-profile-lookup.md]
 ---
 
 ## Question
@@ -24,7 +25,7 @@ Grilling (HITL). The user speaks for themselves; no agent answers on the user's 
 ## Sub-questions
 
 1. **The set.** Which languages, if any beyond Hindi and English, does the full app promise? Which are "supported", which "tried, no promise", which "not offered"?
-2. **Choosing.** Menu, stored profile ([Caller-ID profile and lookup](FULL-APP-06-caller-id-profile-lookup.md)), automatic detection, or a mix? What is the default when nothing is known? What happens when detection and the person disagree?
+2. **Choosing.** A known caller gets zero intake ([register item 5](FULL-APP-REQUIREMENTS.md#a-approved-by-the-user-for-this-effort-user-now)), so their language comes from the stored profile ([Caller-ID profile and lookup](FULL-APP-06-caller-id-profile-lookup.md)), not from a menu. For an unknown caller: automatic detection, the short intro question, or a mix? What is the default when nothing is known? What happens when detection and the person disagree?
 3. **Changing mid-call.** Allowed? How does a person with no screen do it?
 4. **Code-mixed speech** (for example Hindi with English words): in scope for Nov 10, tolerated, or excluded? Who bears a wrong transcript?
 5. **The pair matrix.** Not every pair works equally. Does the app offer every pair, or only pairs it has measured? What does it say to someone on an unmeasured pair?

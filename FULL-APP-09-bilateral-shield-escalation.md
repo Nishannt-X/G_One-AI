@@ -4,7 +4,8 @@ parent: FULL-APP-WAYFINDER.md
 labels: [wayfinder:grilling]
 status: open
 assignee: null
-blocked_by: [FULL-APP-04-continuous-streaming.md, FULL-APP-05-per-phone-memory-privacy.md]
+blocked_by: []
+informed_by: [FULL-APP-04-continuous-streaming.md, FULL-APP-05-per-phone-memory-privacy.md]
 ---
 
 ## Question
@@ -32,7 +33,7 @@ Grilling (HITL). The user defines "bilateral" and "escalation" in their own word
 5. **Who is told.** The person at risk, the speaker, both, a third party? Escalating to a third party needs their contact data and consent ([Per-phone memory and privacy](FULL-APP-05-per-phone-memory-privacy.md)).
 6. **Fairness.** Both parties are users. An honest farmer must not be escalated against because of a misread. What protects the wrongly flagged person?
 7. **Evidence bar.** What measured false-positive and false-negative behaviour, on which languages and with what sample size, is required before any claim beyond "a courtesy from a model reading a transcript"? Who runs the measurement and when? Nothing has been measured, and the measurement itself is a candidate Task ticket.
-8. **Timing under streaming.** In [Continuous streaming on both legs](FULL-APP-04-continuous-streaming.md) a caution could come earlier or later. Does earlier detection justify a different action level?
+8. **Timing under streaming.** In [Continuous streaming on both legs](FULL-APP-04-continuous-streaming.md) a caution could come earlier or later. Does earlier detection justify a different action level? Decide this ticket for today's completed turns first, and mark the streaming answer provisional until 04 resolves.
 9. **What is kept.** Incident records must not store a secret. What is stored, for how long, and who can read it?
 10. **Failure.** Today a failed check is silent. Is that acceptable at higher levels? What should each person hear when the check could not run?
 11. **Adversaries.** Evasion, injection and false-alarm provocation exist today. Name which risks the user accepts and which the product must refuse to claim to handle.
