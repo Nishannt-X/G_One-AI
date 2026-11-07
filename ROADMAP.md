@@ -43,7 +43,7 @@ has free agents. Both share the video and posts.
 Exit: `backend/` and `web/` build, CI is green on a PR, contracts are merged, decision tickets that gate Phase 1 are
 closed.
 
-- [ ] #13 Restructure repo into backend/ and web/
+- [x] #13 Restructure repo into backend/ and web/
 - [ ] #14 Define core contracts and fakes
 - [ ] #15 CI: backend tests and web checks on every PR
 - [ ] #16 Runtime: public URL, env template and runbook
