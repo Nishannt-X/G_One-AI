@@ -63,7 +63,7 @@ Summary content: crop, variety, market, price per unit (from the frozen terms), 
 | Say | Never say |
 | --- | --- |
 | "Two browsers on phones over mobile data" | "phone call", "PSTN", "works on any phone" |
-| "Each turn is translated and spoken to the other person; either person can get a private caution when the other's words sound like a threat or pressure, ask for an OTP, PIN, password, CVV or Aadhaar number, or when they say one aloud themselves" | "intercepts", "blocks", "drops", "filters", "shield", "protects the farmer", "zero-trust", "safe conversation" |
+| "Each turn is translated and spoken to the other person; either person can get a private caution when the other's words sound like a threat or intimidation, ask for an OTP, PIN, password, CVV, full card number or Aadhaar number (including to type a PIN or OTP to receive money), or when they say one aloud themselves" | "intercepts", "blocks", "drops", "filters", "shield", "protects the farmer", "zero-trust", "safe conversation" |
 | "AGMARKNET listed ₹X per quintal for Common rice at Burdwan APMC on <date>, a dated reference" | "today's price", "live rate", "modal", "fair price", "best price" |
 | "Both said yes by voice; a nonbinding summary went to WhatsApp (Twilio Sandbox, demo numbers)" | "smart contract", "legally binding", "verified identity", "locked deal", "secure agreement" |
 | Measured Stop-to-audible seconds from rehearsal | "real time", "instant" |

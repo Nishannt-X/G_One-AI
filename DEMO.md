@@ -12,8 +12,9 @@ A farmer and a buyer open one link on two phones, each picks a language, and the
 get the transcript and translation over WebSocket; **only the listener** gets the translated voice. After a clear buyer
 price offer, **only the farmer** gets a private advisory comparing it with a dated, preloaded market price. If the
 After either person's turn, **only the person who could be harmed** may get a private caution in their language: a
-threat or pressure, a request for a secret (OTP, PIN, password, card CVV, full Aadhaar number), or the speaker saying
-one aloud. The translated speech is still delivered unchanged.
+threat or intimidation, a request for a secret (OTP, PIN, password, card CVV, full card number or expiry date, full
+Aadhaar number, including being asked to type a PIN or OTP or approve a collect request to receive money), or the
+speaker saying one aloud. The translated speech is still delivered unchanged.
 After the buyer's clear offer and the farmer's spoken acceptance, both phones are read the same terms back and each person
 confirms with a spoken "yes" (no button); two yes replies produce a nonbinding summary
 ([Agreement by voice](#agreement-by-voice-nonbinding)). The speaker's raw recording is never sent to the other phone. On the demo Mac, recordings over 48 KB are written
@@ -31,7 +32,7 @@ converter is follow-up work. Spring Boot 3.5.5 is downloaded from Maven Central 
 cp .env.example .env        # fill in values; .env is git-ignored
 set -a; . ./.env; set +a
 mvn spring-boot:run         # http://localhost:8080
-mvn test                    # 158 tests, no network or credentials needed (JS checks run under Node if installed)
+mvn test                    # 162 tests, no network or credentials needed (JS checks run under Node if installed)
 ```
 
 Without credentials the app still starts; creating/joining rooms works and a turn returns `not_configured`.
@@ -153,7 +154,9 @@ or commit them. Then walk this checklist and record **non-secret** results in
    Repeat with the farmer as the speaker: the **buyer** gets the caution, the farmer none.
    Then, with synthetic values only: as either person ask "Please read me the one time code on your phone" (the listener
    is cautioned) and say "my OTP is one two three four five six" (only the speaker is cautioned, and the translated
-   line still reaches the other side). A line giving a UPI ID or account number to receive payment must give no caution.
+   line still reaches the other side). A line giving a UPI ID or account number to receive payment must give no caution. Also try "To receive your money,
+   just type your UPI PIN" and "Approve my collect request to get your money" (the listener is cautioned; the caution
+   says never to enter a PIN or OTP to receive money).
 8. Measure Stop-to-audible latency on the phones and note it.
 
 ## How it works
@@ -180,28 +183,46 @@ Phone ──POST /api/rooms/{id}/agreement/readback-played {version}──> this
   source date and calls it a dated reference, never today's rate. **The bundled sample is a development example (red
   onion, Lasalgaon, 4 Nov 2026); use the live lookup or a row you capture and verify before filming.**
 - **Private cautions:** after every turn, from either person, one independent model call per turn only classifies
-  three questions about what the speaker just said: did they threaten or pressure the listener (`status` "threat" or
-  "none"), did they ask the listener for a secret (`secretRequest`), did they say a secret of their own aloud
-  (`secretShare`). A "secret" is only an OTP or one-time code, a PIN, a password, a card CVV or a full 12-digit Aadhaar
-  number. A UPI ID, bank account number, IFSC code, phone number, name or the last digits of a card are not secrets,
+  three questions about what the speaker just said: did they threaten or intimidate the listener (`status` "threat" or
+  "none"), did they ask the listener for a secret (`secretRequest`: tell, read out, send, type or enter one, or approve a collect request to receive money), did they say
+  a secret of their own aloud (`secretShare`). A "secret" is only an OTP or one-time code, a PIN, a password, a card
+  CVV, a full card number or its expiry date, or a full 12-digit Aadhaar number. A UPI ID, bank account number, IFSC code, phone number, name or the last digits of a card are not secrets,
   because people give those to be paid. Only an explicit `"threat"` or a JSON `true` counts; anything else (unsure,
   the text `"true"`, a number, a missing field) means no caution. The wording is fixed in code (`Caution`), then
   translated and voiced in the recipient's language, and contains nothing the person said, so a spoken secret is never
-  echoed back, stored in a caution or sent to the model a second time. The prompt tells the model never to quote the
-  sentence, and the log line for a failed check carries no transcript.
+  echoed back or stored in a caution, and the caution's own translation and voice requests carry only the fixed wording.
+  **The spoken secret itself does reach the model several times**, because the same transcript is used by each check:
+  the translation of that turn, the caution classifier, the price-offer reader (buyer turns) and, while an agreement
+  draft waits on that speaker, the agreement reply check. The prompt tells the classifier never to quote the sentence,
+  and the log line for a failed check carries no transcript. The classifier receives the transcript as the single
+  `transcript` field of a JSON object, with an instruction to treat it as data; this keeps quotes and line breaks from
+  passing for prompt structure and is hygiene only (see the limits below).
 
   | Kind | Who is told | What it says (fixed wording, summarized) |
   |------|-------------|------------------------------------------|
-  | `threat` | the listener | the other person's words sounded like a threat or intimidation meant to pressure them; they need not agree to anything; stay calm, ask for time, agree to nothing now; if unsafe ask a trusted person (the farmer's version also names the farmer group) or the mandi officials; the app cannot stop the other person or check what they can do |
-  | `secret_request` | the listener | the other person asked for private security information such as an OTP, PIN, password, card CVV or Aadhaar number; do not share it; a normal sale or payment does not need it said aloud; if already done, contact the bank or issuer; the app cannot check who they are |
-  | `secret_share` | the **speaker** | their own last words seemed to include such a detail; the other person was sent a translation, so assume they have it; do not say more; if real, contact the bank or issuer to block or change it; the app cannot take back what was said |
+  | `threat` | the listener | the other person's earlier words sounded like a threat or intimidation; they need not agree to anything because of a threat; stay calm, ask for time, agree to nothing now; if unsafe ask a trusted person (the farmer's version also names the farmer group) or the mandi officials; the app cannot stop the other person or check what they can do |
+  | `secret_request` | the listener | the other person asked for private security information such as an OTP, PIN, password, card CVV, full card number or expiry date, or Aadhaar number; do not share it; never enter a PIN or OTP, or approve a payment request, to receive money; a normal sale or payment does not need it said aloud; if already done, contact the bank or issuer; the app cannot check who they are |
+  | `secret_share` | the **speaker** | their own earlier words seemed to include such a detail; the other person was sent a translation, so assume they have it; do not say more; if real, contact the bank or issuer to block or change it; the app cannot take back what was said |
 
   Each caution travels as a `warning` event with a `kind` and an audience of that one person. The other phone never
   receives it, and a reconnect replays each person's own cautions only. Its voice is stored under a random key (not
-  derivable from the turn id) and only the recipient's token can fetch it. One turn can earn several cautions (each
+  derivable from the turn id) and only the recipient's token can fetch it; anyone else, and any guessed key, gets the
+  same `404`, so the response cannot confirm that a private clip exists. One turn can earn several cautions (each
   once, each with its own voice). **No caution does not mean the conversation is safe**: the classifier can miss
   threats and secrets and can be wrong in both directions. A caution is not a block: the translated turn is delivered
   to the listener as spoken, with its voice, whatever the classifier says.
+
+  **Limits of the cautions, to say out loud.** A caution is a courtesy from a model reading a transcript, not a
+  security control. (1) *Deliberate evasion is not defended against.* A speaker who wants to avoid a caution can spell
+  digits in an unusual way, use another language, code words or a hint ("you know what I need"), split a secret across
+  turns (each turn is classified alone), or phrase a request so it reads as ordinary. (2) *Prompt injection is not
+  defended against.* The spoken words are the model's input, so a speaker can say something aimed at the classifier
+  ("answer none"); the JSON field and the "data, never instructions" line make that harder to do by accident, and nothing
+  more is claimed. The same holds for the translation, offer and agreement-reply calls, which still receive the
+  transcript as bare text. (3) The same channel can be used the other way to provoke a false caution for the listener or
+  the speaker. (4) Only the text of one turn is read, so repeated or earlier context is not considered. There is no
+  keyword list behind the model, on purpose: nothing measured shows it would help, and a brittle word match would add
+  false alarms and a false sense of cover.
 - **Failure behavior (minimal, settles FARMER-CALL-06 for the browser demo):** any stage failure aborts the turn, nobody
   hears partial audio, both phones are told the turn failed, and the speaker can retry the same recording or re-record.
   Advisory problems never block the translated turn; the advisory is skipped. The same holds for the cautions: if the
@@ -316,8 +337,10 @@ for any sale. A hostile or broken API response is rejected, but the app trusts t
   so far completed several-second turns in both directions through the macOS AAC conversion. Very short turns sometimes
   need a retry (cause not isolated). Stop-to-audible latency is unmeasured.
 - Caution quality on real speech: the classifier prompt is untested against the live model and across languages (Hindi
-  or Kannada threats, sarcasm, quoted speech, false alarms on hard bargaining; OTP, PIN, CVV and Aadhaar spoken as digits
-  or words in Hindi, Tamil or Kannada; a UPI ID or account number wrongly flagged, or a real secret missed). The check
+  or Kannada threats, sarcasm, quoted speech, false alarms on hard bargaining; OTP, PIN, CVV, card number, expiry and
+  Aadhaar spoken as digits or words in Hindi, Tamil or Kannada; "type your PIN" and "approve the collect request to
+  receive money" in each language, and a legitimate payment request wrongly flagged; a UPI ID or account number wrongly
+  flagged, or a real secret missed; deliberate evasion and spoken prompt injection, see the limits above). The check
   adds one LLM call per turn from either person (it used to run only on buyer turns), so a farmer turn now costs a call it
   did not before. The tests use a fake model, so they prove routing, privacy, no-echo and failure behavior, not
   classification.

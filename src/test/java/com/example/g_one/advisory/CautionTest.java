@@ -43,12 +43,28 @@ class CautionTest {
     }
 
     @Test
-    void theFarmersThreatCautionKeepsItsOriginalWording() {
-        assertThat(Caution.THREAT.text(Role.BUYER)).isEqualTo("Caution: the buyer's last words sounded like a threat or "
-                + "intimidation meant to pressure you in this negotiation. You do not have to agree to anything because "
-                + "of pressure or a threat. Stay calm, say you need time to decide, and do not agree to anything now. If "
-                + "you feel unsafe, step away and ask a trusted person, your farmer group or the mandi officials for help. "
+    void theThreatCautionPointsAtEarlierWordsAndClaimsOnlyAThreatOrIntimidation() {
+        assertThat(Caution.THREAT.text(Role.BUYER)).isEqualTo("Caution: the buyer's earlier words sounded like a threat "
+                + "or intimidation in this negotiation. You do not have to agree to anything because of a threat. Stay "
+                + "calm, say you need time to decide, and do not agree to anything now. If you feel unsafe, step away and "
+                + "ask a trusted person, your farmer group or the mandi officials for help. "
                 + "This app cannot stop the buyer or check what they can actually do.");
+        // A caution can arrive after a later turn, so none may say "last words"; none claims pressure either.
+        for (Caution c : Caution.values()) {
+            for (Role speaker : Role.values()) {
+                assertThat(c.text(speaker)).contains("earlier words").doesNotContain("last words").doesNotContain("pressure");
+            }
+        }
+    }
+
+    @Test
+    void theSecretRequestCautionSaysNeverEnterAPinOrOtpToReceiveMoney() {
+        for (Role speaker : Role.values()) {
+            assertThat(Caution.SECRET_REQUEST.text(speaker))
+                    .contains("Never enter a PIN or OTP, or approve a payment request, to receive money.");
+        }
+        assertThat(Caution.SECRET_REQUEST.text(Role.BUYER)).contains("a full card number or expiry date");
+        assertThat(Caution.SECRET_SHARE.text(Role.FARMER)).contains("a full card number or expiry date");
     }
 
     @Test
@@ -62,8 +78,9 @@ class CautionTest {
                 assertThat(text).contains("This app cannot");
             }
         }
-        assertThat(Caution.SECRET_REQUEST.text(Role.FARMER)).contains("the farmer's last words")
-                .contains("an OTP or one-time code, a PIN, a password, a card CVV or a full Aadhaar number");
+        assertThat(Caution.SECRET_REQUEST.text(Role.FARMER)).contains("the farmer's earlier words")
+                .contains("an OTP or one-time code, a PIN, a password, a card CVV, a full card number or expiry date, "
+                        + "or a full Aadhaar number");
         // Receiving money needs only a UPI ID or account number; those are never named as secrets.
         for (Caution c : Caution.values()) {
             assertThat(c.text(Role.BUYER)).doesNotContain("UPI").doesNotContain("account number").doesNotContain("IFSC");

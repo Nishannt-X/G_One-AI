@@ -2,9 +2,36 @@
 
 Newest first.
 
+## 2026-11-07 · Harden the cautions after security review: receiving-money scams, wording, honesty, clip probing
+- **Status:** accepted (hackathon scope); classifier quality still unverified against the live model.
+- **Context:** Review of the bilateral cautions found: (P2) a request to *type* a PIN or OTP, or to approve a UPI collect
+  request, "to receive money" is the usual scam but was not named; (P2) the classifier reads the speaker's words, so the
+  speaker can try to steer it, and the docs claimed more than was tested; (P3) the docs said a spoken secret is never
+  sent to the model again, but several checks each receive the transcript; "last words" could point at the wrong turn
+  when a caution arrives after a later one; "pressure" was claimed although only threats and intimidation are
+  classified; a full card number or expiry date was not covered; a guessed clip key got `403` for someone else's clip
+  and `404` for none, which confirms that a private clip exists (the advisory key is derived from the turn id).
+- **Options considered:** A) Do nothing. B) Add keyword rules for PINs and prompt-injection phrases (rejected: nothing
+  measured shows they help, and they are brittle across Hindi, Tamil and Kannada). C) Extend the classifier prompt and
+  fixed wording, isolate the transcript in a JSON field, correct the docs and state the limits. D) Redact the transcript
+  before the model (rejected: edits what people say and still cannot know what is real). For the clip probe: E) random
+  advisory keys. F) One `404` for missing and foreign clips.
+- **Decision:** C and F. `secretRequest` now also covers asking to type or enter a secret, and to approve a collect
+  request as the way to receive money; legitimate payment requests and payment details stay unflagged by instruction.
+  The request caution says to never enter a PIN or OTP, or approve a payment request, to receive money. Card numbers and
+  expiry dates are secrets. Caution wording says "earlier words" and "threat or intimidation" (the sentence about
+  intent to pressure is gone). Only the caution classifier gets the JSON transcript field; this is described as hygiene,
+  with evasion and injection written down as unmitigated limits ([DEMO](DEMO.md#how-it-works)). The audio route returns
+  the same `404` for a missing clip and another person's clip. No dependency, config or endpoint change.
+- **Consequences:** The fake-model tests prove routing, wording, prompt content and that a prompt without the new
+  instruction yields no caution; they do not prove the live model flags these sentences, nor that it never flags a
+  genuine request to be paid. The translation, offer and agreement-reply calls still send the transcript as bare text and
+  share the injection risk. A client that relied on `403` for audio must now accept `404`. Advisory keys are still derivable but no longer confirm anything.
+- **Decided by:** agent (human assigned the review fixes) · **Related:** [DEMO](DEMO.md), previous entry
+
 ## 2026-11-07 · Bilateral private cautions: threat, secret request, secret said aloud
 - **Status:** accepted (hackathon scope); classifier quality unverified against the live model.
-- **Context:** The farmer-only threat caution left the buyer with nothing when the farmer pressured them, and nobody
+- **Context:** The farmer-only threat caution left the buyer with nothing when the farmer threatened them, and nobody
   was warned about the most common scam shape in this setting: someone asking for an OTP or PIN, or a person reading
   one out loud in a translated call. Translation had to stay unchanged and a spoken secret must never be copied
   anywhere new.
@@ -16,7 +43,8 @@ Newest first.
 - **Decision:** C and G. `Caution` holds the kinds, the recipient rule (threat and request go to the listener, a
   secret said aloud goes to the speaker) and the fixed English wording; `AdvisoryService.cautionAsync` runs after the
   turn is delivered, for both roles. Only an explicit `"threat"` or a JSON `true` counts. "Secret" is limited to an OTP
-  or one-time code, PIN, password, card CVV and a full Aadhaar number; UPI IDs, account numbers and IFSC codes are
+  or one-time code, PIN, password, card CVV and a full Aadhaar number (a full card number or expiry date was added on
+  2026-11-07, see the entry above); UPI IDs, account numbers and IFSC codes are
   named in the prompt as not secrets, because they are given to be paid. The caution event carries a `kind` and a
   per-kind `id`, so several cautions in one turn do not collapse in the page. The price advice stays buyer-turn only.
   No new dependency.

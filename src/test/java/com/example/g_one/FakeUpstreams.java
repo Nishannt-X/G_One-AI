@@ -39,6 +39,12 @@ public final class FakeUpstreams implements AutoCloseable {
     public final Map<String, Long> offerDelays = new ConcurrentHashMap<>();
     /** JSON the fake LLM returns for the threat-check prompt. */
     public volatile String threatJson = "{\"status\":\"none\"}";
+    /**
+     * When true the fake classifier answers secretRequest only if the system prompt it was sent actually tells it to
+     * count typing or entering a PIN/OTP and approving a collect request to receive money, and the JSON transcript it
+     * was sent mentions a PIN, OTP or collect request. Removing that part of the prompt makes the answer "none".
+     */
+    public volatile boolean promptAwareClassifier;
     /** Next N threat-check LLM calls fail with HTTP 500. */
     public final AtomicInteger threatFailures = new AtomicInteger();
     /** JSON the fake LLM returns for the agreement-reply prompt, keyed by the spoken transcript; default is "none". */
@@ -126,10 +132,19 @@ public final class FakeUpstreams implements AutoCloseable {
             }
         }
         String content = system.contains("price offer") ? offers.getOrDefault(user, offerJson)
-                : system.contains("threat or intimidation") ? threatJson
+                : system.contains("threat or intimidation") ? (promptAwareClassifier ? promptAware(system, user) : threatJson)
                 : JSON.writeValueAsString(Map.of("text", "T[" + user + "]", "spoken", "S[" + user + "]"));
         reply(x, 200, "application/json",
                 JSON.writeValueAsString(Map.of("choices", List.of(Map.of("message", Map.of("content", content))))));
+    }
+
+    private static String promptAware(String system, String user) throws IOException {
+        String said = JSON.readTree(user).path("transcript").asText("").toLowerCase();
+        boolean promptCovers = system.contains("type or enter a secret")
+                && system.contains("approve or accept a UPI collect request as the way to receive money");
+        boolean aboutSecretOrCollect = said.contains("pin") || said.contains("otp") || said.contains("collect request");
+        return promptCovers && aboutSecretOrCollect ? "{\"status\":\"none\",\"secretRequest\":true}"
+                : "{\"status\":\"none\"}";
     }
 
     private static void reply(HttpExchange x, int status, String type, String body) throws IOException {

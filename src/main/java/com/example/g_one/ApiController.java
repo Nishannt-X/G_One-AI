@@ -114,8 +114,8 @@ public class ApiController {
                                         @RequestHeader(HttpHeaders.AUTHORIZATION) String auth) {
         var s = rooms.authenticate(roomId, auth);
         Room.Clip clip = s.room().clip(key);
-        if (clip == null) throw new ApiException(404, "no_audio", "Audio not found.");
-        if (clip.owner() != s.participant().role) throw new ApiException(403, "forbidden", "Not your audio.");
+        // Same answer for "no such clip" and "someone else's clip", so a guessed key cannot reveal a private clip exists.
+        if (clip == null || clip.owner() != s.participant().role) throw new ApiException(404, "no_audio", "Audio not found.");
         return ResponseEntity.ok().contentType(MediaType.parseMediaType("audio/wav")).body(clip.wav());
     }
 
