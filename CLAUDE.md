@@ -1,7 +1,8 @@
 # G-One
 
 G-One is a **phone-call voice middleman for Indian farmers**, built for the Gnani.ai Great Indian AI Internship
-Challenge (submission closes **2026-11-10 23:59 IST**). A farmer dials a normal phone number (Twilio). An AI assistant
+Challenge (submission closes **2026-11-10 23:59 IST**). A farmer dials a normal Indian phone number (provider chosen in #6: Tone or Ozonetel KooKoo; paid Twilio
+outbound-only is the fallback). An AI assistant
 speaks with them in Hindi, English or Hinglish (Bengali as a stretch), connects the right buyer on a second call leg,
 and stays in the middle of the call: it translates, privately advises the farmer, and summarizes the deal. It
 remembers a gist of each farmer's past calls, so a returning caller never starts from zero. Kirana stores are a
@@ -20,13 +21,14 @@ Team of two: Nikhil (`Sah-Nikhil`) and Nishant (`Nishannt-X`, repo owner). Both 
   dependency only through its own issue plus an ADR line.
 - Frontend: **Vite + React + TypeScript + Tailwind** in `web/`. Package manager **bun** (`bun install`, `bun run`,
   `bunx`). Never npm/npx/yarn/pnpm; translate `npx` in docs to `bunx`.
-- Telephony: **Twilio Programmable Voice + bidirectional Media Streams** (mulaw 8 kHz). Browser call simulator is the
-  fallback path.
+- Telephony: **an Indian-number provider with bidirectional WebSocket media streams** (Tone or KooKoo, picked in #6;
+  both send Twilio-like 8 kHz frames). Paid Twilio outbound-only is the fallback. Keep provider code in a small adapter
+  behind `core.Leg`. Browser call simulator is the floor.
 - Speech: **Gnani Prisma** (STT) and **Gnani Timbre** (TTS). Using at least one Gnani model is a hackathon rule.
 - Agent brain: any OpenAI-compatible `/chat/completions` endpoint with tool calling (Groq by default, configured by
   env). Gnani's Evon LLM is not on their API.
-- Data: decided in the "Runtime: hosting, public URL and data store" ticket. Until then, use the `MemoryStore`
-  interface with an in-memory implementation.
+- Data: **SQLite** (`sqlite-jdbc`) behind `core.MemoryStore` (ADR 0004). Memory rules: `docs/memory.md`. Call flow:
+  `docs/call-flow.md`.
 
 ## Commands (target layout, created by the restructure issue)
 

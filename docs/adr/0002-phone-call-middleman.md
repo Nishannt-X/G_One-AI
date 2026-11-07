@@ -30,9 +30,12 @@ for farmers (Real Deal) and telephonic audio (Noise Canceller). Farmers use ordi
   decided in the call-flow ticket (#8), using the go/no-go results (#6).
 - Speech contract (#5): Prisma v3.0 realtime WebSocket on 8 kHz PCM16, Timbre v2.5 WebSocket emitting 8 kHz mulaw.
 
-## Open (tracked on the map)
+## Update 2026-11-08
 
-Twilio account tier and number (#6), dial-in vs callback (#8), data store (#10).
+- #34 found Indian-number providers with Twilio-like WebSocket media (Tone, Ozonetel KooKoo).
+- #8 decided: **the farmer dials an Indian number** (variant B in `docs/call-flow.md`). The provider is picked by the
+  live checks in #6. If none passes in time, the fallback is "G-One calls you back" on paid Twilio, outbound only.
+- #10 decided the runtime and store (ADR 0004: laptop + ngrok static domain, SQLite).
 
 ## Consequences
 
