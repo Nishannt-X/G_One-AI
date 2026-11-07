@@ -18,15 +18,15 @@ import static com.example.g_one.agent.deal.Agreement.Kind.READBACK_PLAYED;
 import static com.example.g_one.agent.deal.Agreement.Kind.REJECTED;
 import static com.example.g_one.agent.deal.Agreement.Kind.RETRY;
 import static com.example.g_one.agent.deal.Agreement.Kind.VOIDED;
-import static com.example.g_one.agent.Role.BUYER;
-import static com.example.g_one.agent.Role.FARMER;
+import static com.example.g_one.core.LegRole.BUYER;
+import static com.example.g_one.core.LegRole.FARMER;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.example.g_one.agent.deal.Agreement.Intent;
 import com.example.g_one.agent.deal.Agreement.Kind;
 import com.example.g_one.agent.deal.Agreement.Notice;
 import com.example.g_one.agent.deal.Agreement.State;
-import com.example.g_one.agent.Role;
+import com.example.g_one.core.LegRole;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
@@ -93,7 +93,7 @@ class AgreementTest {
         return ++n;
     }
 
-    private List<Notice> say(int draft, Role who, Intent intent) {
+    private List<Notice> say(int draft, LegRole who, Intent intent) {
         return a.heard(draft, who, intent, turn(), clock.instant());
     }
 
@@ -171,7 +171,7 @@ class AgreementTest {
         assertThat(a.state()).isEqualTo(State.AGREED);
 
         // Repeats, retries and replays never produce a second AGREED or change anything.
-        for (Role r : Role.values()) assertThat(say(1, r, YES)).isEmpty();
+        for (LegRole r : LegRole.values()) assertThat(say(1, r, YES)).isEmpty();
         assertThat(a.expire()).isEmpty();
         clock.advance(Duration.ofHours(1));
         assertThat(say(1, FARMER, YES)).isEmpty();

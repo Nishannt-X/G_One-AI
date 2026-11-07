@@ -1,6 +1,6 @@
 package com.example.g_one.agent.caution;
 
-import com.example.g_one.agent.Role;
+import com.example.g_one.core.LegRole;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.EnumSet;
 import java.util.Locale;
@@ -52,15 +52,15 @@ public enum Caution {
     }
 
     /** Only the role that could be harmed is ever told. */
-    public Role recipient(Role speaker) {
+    public LegRole recipient(LegRole speaker) {
         return this == SECRET_SHARE ? speaker : speaker.other();
     }
 
     /** English wording for the recipient, before it is translated into their language. */
-    public String text(Role speaker) {
+    public String text(LegRole speaker) {
         String other = speaker.wire();
         return switch (this) {
-            case THREAT -> THREAT_TEXT.formatted(other, speaker == Role.BUYER
+            case THREAT -> THREAT_TEXT.formatted(other, speaker == LegRole.BUYER
                     ? "a trusted person, your farmer group or the mandi officials"
                     : "a trusted person or the mandi officials", other);
             case SECRET_REQUEST -> REQUEST_TEXT.formatted(other, other);

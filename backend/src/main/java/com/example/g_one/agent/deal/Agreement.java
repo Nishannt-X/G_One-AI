@@ -1,6 +1,6 @@
 package com.example.g_one.agent.deal;
 
-import com.example.g_one.agent.Role;
+import com.example.g_one.core.LegRole;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -49,7 +49,7 @@ final class Agreement {
      * Something the room must be told. {@code role} is set for CONFIRMED, RETRY and READBACK_PLAYED. {@code seq} rises
      * with every notice in this room, so a phone can order state updates that two threads delivered out of order.
      */
-    record Notice(Kind kind, Role role, int version, Terms terms, boolean farmerYes, boolean buyerYes,
+    record Notice(Kind kind, LegRole role, int version, Terms terms, boolean farmerYes, boolean buyerYes,
                   boolean farmerPlayed, boolean buyerPlayed, long seq) {}
 
     record Ask(Phase phase, int version, Terms terms) {}
@@ -63,11 +63,11 @@ final class Agreement {
     private Instant openedAt;
     private Instant deadline;
     private Instant confirmingSince;
-    private final EnumSet<Role> yes = EnumSet.noneOf(Role.class);
-    private final EnumSet<Role> played = EnumSet.noneOf(Role.class);
+    private final EnumSet<LegRole> yes = EnumSet.noneOf(LegRole.class);
+    private final EnumSet<LegRole> played = EnumSet.noneOf(LegRole.class);
     private boolean readbackSent;
     private long lastOfferTurn;
-    private final Map<Role, Long> lastReplyTurn = new EnumMap<>(Role.class);
+    private final Map<LegRole, Long> lastReplyTurn = new EnumMap<>(LegRole.class);
     private long noticeSeq;
 
     Agreement(Clock clock, Duration window, Duration offerTtl) {
@@ -108,10 +108,10 @@ final class Agreement {
     }
 
     /** @return what to ask the model about this speaker's next reply, or null when no reply can matter right now */
-    synchronized Ask ask(Role role) {
+    synchronized Ask ask(LegRole role) {
         if (due()) return null;
         return switch (state) {
-            case OFFER_OPEN -> role == Role.FARMER ? new Ask(Phase.ACCEPT, version, terms) : null;
+            case OFFER_OPEN -> role == LegRole.FARMER ? new Ask(Phase.ACCEPT, version, terms) : null;
             case READBACK, CONFIRMING -> new Ask(Phase.CONFIRM, version, terms);
             default -> null;
         };
@@ -125,14 +125,14 @@ final class Agreement {
      * @param spokenAt when the recording began (server time minus its length); speech that began before both phones
      *                 finished playing the read-back cannot have been a response to it
      */
-    synchronized List<Notice> heard(int draft, Role role, Intent intent, long turnSeq, Instant spokenAt) {
+    synchronized List<Notice> heard(int draft, LegRole role, Intent intent, long turnSeq, Instant spokenAt) {
         List<Notice> out = new ArrayList<>(expireDue());
         if (draft != version) return out;
         if (turnSeq <= lastReplyTurn.getOrDefault(role, 0L) && intent != Intent.NO) return out;
         lastReplyTurn.merge(role, turnSeq, Math::max);
         switch (state) {
             case OFFER_OPEN -> {
-                if (role != Role.FARMER) break;
+                if (role != LegRole.FARMER) break;
                 if (intent == Intent.YES) {
                     state = State.READBACK;
                     deadline = clock.instant().plus(window);
@@ -198,7 +198,7 @@ final class Agreement {
      * One phone reports that it played the read-back of this draft to its end. Confirmations may count once both have;
      * the time limit keeps running, so a phone that never reports expires the draft instead of confirming anything.
      */
-    synchronized List<Notice> readbackPlayed(int draft, Role role) {
+    synchronized List<Notice> readbackPlayed(int draft, LegRole role) {
         List<Notice> out = new ArrayList<>(expireDue());
         if (draft != version || state != State.READBACK || !readbackSent || !played.add(role)) return out;
         if (played.size() == 2) {
@@ -268,8 +268,8 @@ final class Agreement {
         readbackSent = false;
     }
 
-    private Notice notice(Kind kind, Role role) {
-        return new Notice(kind, role, version, terms, yes.contains(Role.FARMER), yes.contains(Role.BUYER),
-                played.contains(Role.FARMER), played.contains(Role.BUYER), ++noticeSeq);
+    private Notice notice(Kind kind, LegRole role) {
+        return new Notice(kind, role, version, terms, yes.contains(LegRole.FARMER), yes.contains(LegRole.BUYER),
+                played.contains(LegRole.FARMER), played.contains(LegRole.BUYER), ++noticeSeq);
     }
 }

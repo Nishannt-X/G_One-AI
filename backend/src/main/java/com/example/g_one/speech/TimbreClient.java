@@ -1,7 +1,7 @@
 package com.example.g_one.speech;
 
 import com.example.g_one.GOneProperties;
-import com.example.g_one.Language;
+import com.example.g_one.core.Language;
 import java.util.Map;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
