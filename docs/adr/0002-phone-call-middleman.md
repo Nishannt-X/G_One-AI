@@ -20,10 +20,19 @@ for farmers (Real Deal) and telephonic audio (Noise Canceller). Farmers use ordi
 - The **call simulator** (browser microphone into the same pipeline) is the fallback floor and is never presented as a
   phone call.
 
+## Topology (settled 2026-11-07 by research issue #4)
+
+- **Two independent Twilio calls, each with its own bidirectional `<Connect><Stream>`**, relayed by our backend. A
+  conference or `<Dial>` bridge mixes raw audio and cannot keep whispers or untranslated speech from the buyer.
+- A **paid** Twilio account is required (trials block `<Stream>`).
+- Twilio has **no Indian local or mobile numbers**. Farmer dial-in means calling a foreign number (an international call).
+  Outbound calls to Indian mobiles work with a non-Indian caller ID. Whether the farmer dials in or G-One calls back is
+  decided in the call-flow ticket (#8), using the go/no-go results (#6).
+- Speech contract (#5): Prisma v3.0 realtime WebSocket on 8 kHz PCM16, Timbre v2.5 WebSocket emitting 8 kHz mulaw.
+
 ## Open (tracked on the map)
 
-Exact topology (two streamed calls relayed by the backend vs a conference), Twilio account tier and numbers, and the
-data store.
+Twilio account tier and number (#6), dial-in vs callback (#8), data store (#10).
 
 ## Consequences
 

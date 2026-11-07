@@ -102,7 +102,11 @@ item merges.
   is Mac only. Telephony audio is 8 kHz, so turns are small, but test long turns.
 - Timbre returns 24 kHz WAV with an open-ended length header. Twilio wants 8 kHz mulaw, base64, in ~20 ms frames.
 - Timbre reads numbers better **written as words**.
-- Twilio **trial accounts block Media Streams**. Indian numbers need KYC. Check the topology ticket before building.
+- Twilio **trial accounts block Media Streams**; Twilio sells **no Indian local/mobile numbers**; any +91 caller ID is
+  blocked for outbound (error 13247). Outbound to Indian mobiles needs a non-Indian caller ID. Full facts: issue #4.
+- Prisma realtime wants **PCM16 at 8 kHz in exactly 512-sample (1,024-byte) frames every 64 ms**, not raw mulaw, and
+  sends no partial transcripts. Timbre WS can emit **8 kHz mulaw** directly for Twilio. No TTS cancel message: close the
+  socket. Full contract: issue #5.
 - Run a **private copy of the jar** for live demos. Rebuilding under a running server hangs it.
 
 ## Orchestration
