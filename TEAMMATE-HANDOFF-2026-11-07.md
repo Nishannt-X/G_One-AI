@@ -345,16 +345,18 @@ If your team uses different rules, follow them, but never be looser than these.
 | Branch on `origin` (GitHub repo `Nishannt-X/G_One-AI`) | Tip when listed | What it is |
 | --- | --- | --- |
 | `main` | `2d606e8` | Merged PR #1 (home page and demo stage) and PR #2 (bilateral cautions) |
-| `docs/full-app-wayfinder` | `13e9ccd`, then the commit that adds this file | Full-app map, ten tickets, requirements register, `DECISIONS.md` entries. **No PR open** |
+| `docs/full-app-wayfinder` | `f67e791` when this row was corrected (read from `git ls-remote`, 2026-11-07). The correcting commit and later commits sit on top, so the live tip is newer | Full-app map, ten tickets, requirements register, `DECISIONS.md` entries, this file. **No PR open** |
 | `docs/project-handoff-2026-11-07` | `7db57f8` | Adds `HANDOFF-2026-11-07.md` (repo state, runtime rules, workflow). **Not merged into `main`; no PR open** |
 | `feat/bilateral-cautions` | `28ee5e8` | Merged by PR #2; still exists |
 | `feat/g-one-demo-site` | `214478f` | Merged by PR #1; still exists |
 
 - `docs/hackathon-wayfinder` is **not** on `origin` any more. A stale local copy may exist on the user's machine; do not
   branch from it.
-- `docs/full-app-wayfinder` is two commits ahead of `main` in documents only: `e189751` (chart the map, supersede the Nov
-  10 browser-demo scope) and `13e9ccd` (anchor the approved requirements, simplify blocking). It changes no code,
-  configuration or dependency.
+- `docs/full-app-wayfinder` was four commits ahead of `main` at `f67e791` (`git rev-list --left-right --count
+  origin/main...HEAD` gave `0 4`), in documents only: `e189751` (chart the map, supersede the Nov 10 browser-demo scope),
+  `13e9ccd` (anchor the approved requirements, simplify blocking), `dbd8db0` (add this file and record the fixed
+  requirements) and `f67e791` (state team area ownership). The commit that corrected this row adds
+  `SECTION-HANDOFF-2026-11-07.md`, so the count is now higher. It changes no code, configuration or dependency.
 - This picture goes stale as soon as anyone pushes. Run `git fetch` and `git ls-remote --heads origin` before acting on it.
 
 ## 10. Sources (repo files, optional detail)
