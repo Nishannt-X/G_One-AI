@@ -1,40 +1,65 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
+import CallBanner from './components/CallBanner'
+import CallCard from './components/CallCard'
+import CallPicker from './components/CallPicker'
+import DealPanel from './components/DealPanel'
+import Header from './components/Header'
+import Lane from './components/Lane'
+import MemoryPanel from './components/MemoryPanel'
+import ToolChips from './components/ToolChips'
+import { pickCall } from './lib/callState'
+import { useTheme } from './lib/theme'
+import { useConsoleFeed } from './lib/useConsoleFeed'
+import { useNow } from './lib/useNow'
 
-type Health = 'checking' | 'up' | 'down'
+// The dev tools are loaded only when `import.meta.env.DEV` is true; the bundler removes this branch from production.
+const DevTools = import.meta.env.DEV ? lazy(() => import('./dev/DevTools')) : null
 
-/** Placeholder console page. The live call view arrives with the console issues (#21, #28). */
 export default function App() {
-  const [health, setHealth] = useState<Health>('checking')
-
-  useEffect(() => {
-    const controller = new AbortController()
-    fetch('/api/health', { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((body: { ok?: boolean }) => setHealth(body.ok === true ? 'up' : 'down'))
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          console.warn('Backend health check failed', err)
-          setHealth('down')
-        }
-      })
-    return () => controller.abort()
-  }, [])
-
-  const label = { checking: 'Checking backend…', up: 'Backend is up', down: 'Backend is not reachable' }[health]
-  const dot = { checking: 'bg-amber-400', up: 'bg-emerald-500', down: 'bg-red-500' }[health]
+  const { feed, status, dispatch } = useConsoleFeed()
+  const { theme, toggle } = useTheme()
+  const [pinned, setPinned] = useState<string | null>(null)
+  const call = pickCall(feed, pinned)
+  const now = useNow(call !== null && call.ended === null)
 
   return (
-    <main className="mx-auto flex min-h-svh max-w-3xl flex-col gap-6 px-4 py-12">
-      <header>
-        <h1 className="text-3xl font-semibold tracking-tight">G-One console</h1>
-        <p className="mt-2 text-slate-600 dark:text-slate-400">
-          Live call view, farmer memory and the buyer directory will appear here.
-        </p>
-      </header>
-      <p className="flex items-center gap-2 text-sm" role="status" data-testid="backend-health">
-        <span className={`inline-block size-2.5 rounded-full ${dot}`} aria-hidden="true" />
-        {label}
-      </p>
-    </main>
+    <div className="min-h-screen">
+      <main className="mx-auto max-w-[1366px] space-y-5 p-4 md:space-y-6 md:p-8">
+        <Header status={status} theme={theme} onToggleTheme={toggle} />
+        {DevTools && (
+          <Suspense fallback={null}>
+            <DevTools emit={(event) => dispatch({ type: 'event', event, mock: true })} />
+          </Suspense>
+        )}
+        {call ? (
+          <>
+            <CallBanner origin={call.origin} />
+            <CallPicker calls={feed.order.map((id) => feed.calls[id])} selectedId={call.callId} onPick={setPinned} />
+            <CallCard call={call} now={now} />
+            <div className="grid gap-5 md:gap-6 md:grid-cols-2">
+              <Lane call={call} role="farmer" />
+              <Lane call={call} role="buyer" />
+            </div>
+            <div className="grid gap-5 md:gap-6 lg:grid-cols-2">
+              <MemoryPanel call={call} />
+              <div className="space-y-5 md:space-y-6">
+                <DealPanel call={call} />
+                <ToolChips call={call} />
+              </div>
+            </div>
+          </>
+        ) : (
+          <section className="rounded-2xl border-2 border-slate-300 p-8 text-center dark:border-slate-600">
+            <h2 className="text-3xl font-extrabold md:text-4xl">Waiting for a call</h2>
+            <p className="mt-3 text-xl text-slate-700 dark:text-slate-300">
+              {status === 'connected' ? 'The console is connected. A call shows up here when it starts.' : 'The console is not connected to the backend yet.'}
+            </p>
+          </section>
+        )}
+        <footer className="border-t-2 border-slate-300 pt-4 text-lg font-bold dark:border-slate-600">
+          Speech by Gnani Prisma and Timbre
+        </footer>
+      </main>
+    </div>
   )
 }
