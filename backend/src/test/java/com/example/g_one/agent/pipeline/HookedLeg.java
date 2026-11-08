@@ -16,13 +16,15 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * A {@link Leg} that behaves like its {@link FakeLeg} except where a test overrides {@link #playbackDone()}, for
- * example to report playback the way a broken transport would.
+ * A {@link Leg} that behaves like its {@link FakeLeg} except where a test overrides {@link #playbackDone()} or
+ * {@link #play}, for example to behave the way a broken transport would.
  */
 final class HookedLeg implements Leg {
     final FakeLeg fake;
     /** Replaces the fake's {@link #playbackDone()} when set. */
     volatile Supplier<CompletableFuture<PlaybackOutcome>> playbackDone;
+    /** Replaces the fake's {@link #play} when set. */
+    volatile Consumer<AudioFrame> play;
 
     HookedLeg(FakeLeg fake) {
         this.fake = fake;
@@ -34,7 +36,16 @@ final class HookedLeg implements Leg {
     @Override public LegSource source() { return fake.source(); }
     @Override public Language language() { return fake.language(); }
     @Override public Optional<CallerKey> callerKey() { return fake.callerKey(); }
-    @Override public void play(AudioFrame frame) { fake.play(frame); }
+    @Override
+    public void play(AudioFrame frame) {
+        Consumer<AudioFrame> override = play;
+        if (override != null) {
+            override.accept(frame);
+        } else {
+            fake.play(frame);
+        }
+    }
+
     @Override public void clearPlayback() { fake.clearPlayback(); }
     @Override public void hangup() { fake.hangup(); }
     @Override public void onAudio(Consumer<AudioFrame> listener) { fake.onAudio(listener); }

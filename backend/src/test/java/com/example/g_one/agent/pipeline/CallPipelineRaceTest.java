@@ -47,6 +47,7 @@ class CallPipelineRaceTest {
     private static final int RATE = CallPipeline.TELEPHONY_SAMPLE_RATE;
     private static final int MS_PER_CHAR = 50; // FakeTextToSpeech default
     private static final Duration GRACE = Duration.ofSeconds(8);
+    private static final Duration HOLD = Duration.ofMillis(1500);
 
     private final AtomicLong clock = new AtomicLong(1_762_600_000_000L);
     private final ManualExecutor executor = new ManualExecutor();
@@ -68,7 +69,7 @@ class CallPipelineRaceTest {
     private LegRegistry pipeline(MemoryStore memory, SpeechToText hearing, TextToSpeech speech) {
         LegRegistry r = new LegRegistry();
         new CallPipeline(brain, hearing, speech, memory, bus, List.of(endedCalls::add), executor, clock::get, GRACE,
-                delays).attach(r);
+                HOLD, delays).attach(r);
         return r;
     }
 
@@ -338,6 +339,62 @@ class CallPipelineRaceTest {
         leg.finishPlayback();
         assertThat(spoken()).containsExactly(GREETING, replyTo("bye"), replyTo("ek aur baat"));
         assertThat(leg.isEnded()).isFalse();
+    }
+
+    // ---- review round 2, finding 1: speech start while the brain thinks holds the reply ----
+
+    @Test
+    void aSpeechStartWhileTheBrainThinksOnAnotherThreadHoldsTheReplyUntilTheWindowEnds() {
+        FakeLeg leg = join(pipeline(), FakeLeg.farmer(callId));
+        leg.finishPlayback();
+        Gate gate = new Gate();
+        brain.whileThinking = text -> gate.pass();
+        session().say("pehla");
+
+        CompletableFuture<Void> thinker = onAnotherThread(executor::runNext); // the brain is mid-answer
+        gate.awaitArrival();
+        session().emitSpeechStart(); // the farmer starts again on the STT thread
+        gate.open();
+        assertThat(thinker).succeedsWithin(WAIT);
+
+        assertThat(executor.pending()).as("the ready reply is held, not synthesised").isZero();
+        assertThat(spoken()).containsExactly(GREETING);
+        assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).hasSize(1);
+        assertThat(delays.pendingDelaysMs()).containsExactly(HOLD.toMillis());
+
+        delays.fireAll(); // no final turn followed: a cough
+        executor.runAll();
+        assertThat(spoken()).containsExactly(GREETING, replyTo("pehla"));
+        assertThat(leg.unheardFrames()).isEqualTo(framesFor(replyTo("pehla")).size());
+    }
+
+    @Test
+    void aTurnRacingTheBrainOnAnotherThreadDiscardsTheHeldReply() {
+        FakeLeg leg = join(pipeline(), FakeLeg.farmer(callId));
+        leg.finishPlayback();
+        Gate gate = new Gate();
+        brain.whileThinking = text -> {
+            if (text.equals("pehla")) {
+                gate.pass();
+            }
+        };
+        session().say("pehla");
+
+        CompletableFuture<Void> thinker = onAnotherThread(executor::runNext);
+        gate.awaitArrival();
+        session().emitSpeechStart();
+        CompletableFuture<Void> farmer = onAnotherThread(() -> session().emitTurn("doosra"));
+        assertThat(farmer).succeedsWithin(WAIT);
+        gate.open();
+        assertThat(thinker).succeedsWithin(WAIT);
+        executor.runAll();
+        delays.fireAll();
+        executor.runAll();
+
+        assertThat(spoken()).containsExactly(GREETING, replyTo("doosra"));
+        assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).extracting(ConsoleEvent.AssistantSaid::text)
+                .containsExactly(GREETING, replyTo("doosra"));
+        assertThat(leg.clearCount()).isZero();
     }
 
     // ---- finding 6: the start steps check for the end ----

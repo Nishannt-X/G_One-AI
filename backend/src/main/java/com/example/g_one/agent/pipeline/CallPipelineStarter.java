@@ -28,8 +28,13 @@ import org.springframework.stereotype.Component;
  *
  * <p>Brain calls, memory loads and end handlers run on virtual threads, one per task.
  *
- * <p>{@code g-one.pipeline.goodbye-grace-ms} (default 8000) sets how long past the goodbye's length the assistant waits
- * for the leg to confirm the farmer heard it before hanging up anyway.
+ * <p>Settings (not in {@code application.yml}; the defaults apply unless set):
+ * <ul>
+ *   <li>{@code g-one.pipeline.goodbye-grace-ms} (default 8000): how long past the goodbye's length the assistant waits
+ *       for the leg to confirm the farmer heard it before hanging up anyway.</li>
+ *   <li>{@code g-one.pipeline.held-reply-release-ms} (default 1500): how long a reply held because the farmer started
+ *       speaking while it was prepared waits for a final turn before it plays.</li>
+ * </ul>
  */
 @Component
 class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean {
@@ -43,13 +48,15 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
     private final ObjectProvider<MemoryStore> memory;
     private final ObjectProvider<CallEndHandler> endHandlers;
     private final Duration goodbyeGrace;
+    private final Duration heldReplyRelease;
     private ExecutorService executor;
     private CallPipeline pipeline;
 
     CallPipelineStarter(LegRegistry registry, ConsoleBus bus, ObjectProvider<AgentBrain> brain,
                         ObjectProvider<SpeechToText> speechToText, ObjectProvider<TextToSpeech> textToSpeech,
                         ObjectProvider<MemoryStore> memory, ObjectProvider<CallEndHandler> endHandlers,
-                        @Value("${g-one.pipeline.goodbye-grace-ms:8000}") long goodbyeGraceMs) {
+                        @Value("${g-one.pipeline.goodbye-grace-ms:8000}") long goodbyeGraceMs,
+                        @Value("${g-one.pipeline.held-reply-release-ms:1500}") long heldReplyReleaseMs) {
         this.registry = registry;
         this.bus = bus;
         this.brain = brain;
@@ -58,6 +65,7 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
         this.memory = memory;
         this.endHandlers = endHandlers;
         this.goodbyeGrace = Duration.ofMillis(goodbyeGraceMs);
+        this.heldReplyRelease = Duration.ofMillis(heldReplyReleaseMs);
     }
 
     @Override
@@ -85,7 +93,7 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
         });
         executor = Executors.newVirtualThreadPerTaskExecutor();
         pipeline = new CallPipeline(b, stt, tts, store, bus, endHandlers.orderedStream().toList(), executor,
-                System::currentTimeMillis, goodbyeGrace, CallPipeline.executorDelays(executor));
+                System::currentTimeMillis, goodbyeGrace, heldReplyRelease, CallPipeline.executorDelays(executor));
         pipeline.attach(registry);
         log.info("The call pipeline is on");
     }

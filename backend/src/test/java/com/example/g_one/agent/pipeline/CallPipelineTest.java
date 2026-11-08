@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.example.g_one.agent.AgentBrain.Line;
 import com.example.g_one.agent.AgentBrain.Speaker;
 import com.example.g_one.agent.pipeline.CallEndHandler.EndedCall;
+import com.example.g_one.agent.pipeline.FlakyTextToSpeech.Failure;
 import com.example.g_one.core.AudioFrame;
 import com.example.g_one.core.CallGist;
 import com.example.g_one.core.CallId;
@@ -15,6 +16,7 @@ import com.example.g_one.core.ConsoleBus;
 import com.example.g_one.core.ConsoleEvent;
 import com.example.g_one.core.FarmerMemory;
 import com.example.g_one.core.InMemoryMemoryStore;
+import com.example.g_one.core.Leg;
 import com.example.g_one.core.LegRegistry;
 import com.example.g_one.core.LegRole;
 import com.example.g_one.core.LegSource;
@@ -28,9 +30,12 @@ import com.example.g_one.fakes.FakeTextToSpeech;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 /**
  * The call pipeline against the core fakes only. Background steps run on a {@link ManualExecutor} and timers on
@@ -64,12 +69,12 @@ class CallPipelineTest {
                                      List<CallEndHandler> handlers) {
         LegRegistry r = new LegRegistry();
         new CallPipeline(brain, hearing, speech, memory, bus, handlers, executor, clock::get,
-                CallPipeline.DEFAULT_GOODBYE_GRACE, delays).attach(r);
+                CallPipeline.DEFAULT_GOODBYE_GRACE, CallPipeline.DEFAULT_HELD_REPLY_RELEASE, delays).attach(r);
         return r;
     }
 
     /** Registers the leg and runs the start step (memory, STT session, greeting). */
-    private FakeLeg join(LegRegistry r, FakeLeg leg) {
+    private <L extends Leg> L join(LegRegistry r, L leg) {
         r.register(leg);
         executor.runAll();
         return leg;
@@ -309,6 +314,133 @@ class CallPipelineTest {
         assertThat(spoken()).containsExactly(GREETING, replyTo("haan"));
     }
 
+    // ---- speech start while the assistant is thinking: the reply is held ----
+
+    private static final long HOLD_MS = CallPipeline.DEFAULT_HELD_REPLY_RELEASE.toMillis();
+
+    @Test
+    void aReplyHeldByASpeechStartIsDiscardedByTheTurnThatFollows() {
+        FakeLeg leg = join(FakeLeg.farmer(callId));
+        leg.finishPlayback();
+        session().say("pehla"); // the brain starts on "pehla"
+
+        session().emitSpeechStart(); // the farmer speaks again before the reply is ready
+        assertThat(delays.pendingDelaysMs()).containsExactly(HOLD_MS);
+        executor.runAll(); // the reply to "pehla" is ready, but held
+
+        assertThat(spoken()).as("the held reply does not start over the farmer").containsExactly(GREETING);
+        assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).hasSize(1);
+        assertThat(leg.played()).hasSize(framesFor(GREETING).size());
+
+        session().emitTurn("doosra"); // ...and it was a real turn
+        executor.runAll();
+        delays.fireAll(); // the old hold window ends and changes nothing
+        executor.runAll();
+
+        assertThat(spoken()).containsExactly(GREETING, replyTo("doosra"));
+        assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).extracting(ConsoleEvent.AssistantSaid::text)
+                .containsExactly(GREETING, replyTo("doosra"));
+        assertThat(brain.responds.get(1).history()).as("the discarded reply is not in the conversation")
+                .containsExactly(assistant(GREETING), farmer("pehla"));
+        assertThat(leg.clearCount()).as("nothing was playing, so nothing was cleared").isZero();
+    }
+
+    @Test
+    void aReplyThatIsReadyDuringTheHoldPlaysWhenNoTurnFollowsInTime() {
+        FakeLeg leg = join(FakeLeg.farmer(callId));
+        leg.finishPlayback();
+        session().say("pehla");
+        session().emitSpeechStart(); // a cough
+        session().emitSpeechStart(); // and another: the window is not extended
+        assertThat(delays.pendingDelaysMs()).containsExactly(HOLD_MS);
+
+        executor.runAll(); // the reply completes during the hold and waits
+        assertThat(spoken()).containsExactly(GREETING);
+        assertThat(executor.pending()).isZero();
+
+        delays.fireAll(); // the window ends without a final turn
+        assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).extracting(ConsoleEvent.AssistantSaid::text)
+                .containsExactly(GREETING, replyTo("pehla"));
+        executor.runAll();
+
+        assertThat(spoken()).containsExactly(GREETING, replyTo("pehla"));
+        assertThat(leg.unheardFrames()).isEqualTo(framesFor(replyTo("pehla")).size());
+        leg.remoteHangup();
+        executor.runAll();
+        assertThat(endedCalls).singleElement().satisfies(c -> assertThat(c.transcript()).containsExactly(
+                assistant(GREETING), farmer("pehla"), assistant(replyTo("pehla"))));
+    }
+
+    @Test
+    void aReplyStillBeingPreparedWhenTheHoldEndsPlaysAsSoonAsItIsReady() {
+        FakeLeg leg = join(FakeLeg.farmer(callId));
+        leg.finishPlayback();
+        session().say("pehla");
+        session().emitSpeechStart();
+
+        delays.fireAll(); // the window ends while the brain is still thinking
+        executor.runAll();
+
+        assertThat(spoken()).containsExactly(GREETING, replyTo("pehla"));
+        assertThat(leg.unheardFrames()).isEqualTo(framesFor(replyTo("pehla")).size());
+    }
+
+    @Test
+    void aSpeechStartBeforeTheGreetingIsReadyHoldsTheGreeting() {
+        FakeLeg leg = FakeLeg.farmer(callId);
+        registry.register(leg);
+        executor.runNext(); // memory
+        executor.runNext(); // the session opens; the greeting is being prepared
+
+        session().emitSpeechStart();
+        executor.runAll();
+        assertThat(brain.greets).hasSize(1);
+        assertThat(spoken()).as("the greeting waits while the farmer may be speaking").isEmpty();
+
+        delays.fireAll();
+        executor.runAll();
+        assertThat(spoken()).containsExactly(GREETING);
+        assertThat(leg.played()).isEqualTo(framesFor(GREETING));
+    }
+
+    @Test
+    void speechStartWhileTheAssistantSpeaksIsStillABargeInNotAHold() {
+        FakeLeg leg = join(FakeLeg.farmer(callId));
+        assertThat(leg.unheardFrames()).isPositive();
+
+        session().emitSpeechStart(); // over the greeting
+
+        assertThat(leg.clearCount()).isEqualTo(1);
+        assertThat(leg.unheardFrames()).isZero();
+        assertThat(delays.pendingDelaysMs()).as("no hold timer for a barge-in").isEmpty();
+        session().emitTurn("ruko");
+        executor.runAll();
+        assertThat(spoken()).containsExactly(GREETING, replyTo("ruko"));
+
+        leg.finishPlayback();
+        session().emitSpeechStart(); // silent, nothing on the way: neither a barge-in nor a hold
+        assertThat(leg.clearCount()).isEqualTo(1);
+        assertThat(delays.pendingDelaysMs()).isEmpty();
+    }
+
+    @Test
+    void theFarmerHangingUpDuringAHoldDropsTheHeldReply() {
+        FakeLeg leg = join(FakeLeg.farmer(callId));
+        leg.finishPlayback();
+        session().say("pehla");
+        session().emitSpeechStart();
+        executor.runAll(); // held
+
+        leg.remoteHangup();
+        delays.fireAll();
+        executor.runAll();
+
+        assertThat(spoken()).containsExactly(GREETING);
+        assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).hasSize(1);
+        assertThat(endedCalls).singleElement().satisfies(c -> assertThat(c.transcript())
+                .containsExactly(assistant(GREETING), farmer("pehla")));
+    }
+
     // ---- ending ----
 
     @Test
@@ -500,23 +632,126 @@ class CallPipelineTest {
         assertThat(spoken()).containsExactly(GREETING);
     }
 
-    @Test
-    void speechSynthesisFailureStillEndsTheCallWhenAsked() {
-        TextToSpeech failsOnGoodbye = (text, language, rate, sink) -> {
-            if (text.equals(replyTo("bye"))) {
-                throw new IllegalStateException("TTS down (test)");
-            }
-            return tts.speak(text, language, rate, sink);
-        };
-        LegRegistry r = pipelineWith(store, failsOnGoodbye, stt, List.of(endedCalls::add));
-        FakeLeg leg = join(r, FakeLeg.farmer(callId));
+
+    // ---- a goodbye that cannot be spoken ----
+
+    private static final long GRACE_MS = CallPipeline.DEFAULT_GOODBYE_GRACE.toMillis();
+
+    @ParameterizedTest
+    @EnumSource(Failure.class)
+    void aGoodbyeWithoutCompleteAudioIsNeverTakenAsHeardAndTheFixedGoodbyeIsSaidInstead(Failure how) {
+        FlakyTextToSpeech flaky = new FlakyTextToSpeech().fail(replyTo("bye"), how);
+        FakeLeg leg = join(pipelineWith(store, flaky, stt, List.of(endedCalls::add)), FakeLeg.farmer(callId));
         leg.finishPlayback();
+        int greetingFrames = leg.played().size();
 
         session().say("bye");
         executor.runAll();
 
-        assertThat(leg.isEnded()).isTrue();
+        assertThat(flaky.spoken()).containsExactly(GREETING, replyTo("bye"), CallPipeline.FALLBACK_GOODBYE);
+        assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).last().satisfies(said -> {
+            assertThat(said.text()).isEqualTo(CallPipeline.FALLBACK_GOODBYE);
+            assertThat(said.language()).isEqualTo("hi-IN");
+        });
+        List<AudioFrame> afterGreeting = leg.played().subList(greetingFrames, leg.played().size());
+        int partial = how == Failure.FAILS_AFTER_ONE_FRAME || how == Failure.CANCELLED_AFTER_ONE_FRAME ? 1 : 0;
+        assertThat(afterGreeting).hasSize(partial + framesFor(CallPipeline.FALLBACK_GOODBYE).size());
+        assertThat(afterGreeting.subList(partial, afterGreeting.size()))
+                .isEqualTo(framesFor(CallPipeline.FALLBACK_GOODBYE));
+        assertThat(leg.isEnded()).as("no hang-up before the fixed goodbye was heard").isFalse();
+        assertThat(eventsOf(ConsoleEvent.CallEnded.class)).isEmpty();
+        assertThat(delays.pendingDelaysMs()).as("the timeout covers the partial goodbye and the fixed one")
+                .containsExactly(afterGreeting.size() * (long) FakeTextToSpeech.FRAME_MS + GRACE_MS);
+
+        leg.finishPlayback();
+        executor.runAll();
+
         assertThat(leg.hungUpByUs()).isTrue();
+        assertThat(eventsOf(ConsoleEvent.CallEnded.class)).singleElement()
+                .satisfies(e -> assertThat(e.reason()).isEqualTo(CallPipeline.ASSISTANT_HANGUP));
+        assertThat(endedCalls).singleElement().satisfies(c -> assertThat(c.transcript()).endsWith(
+                assistant(replyTo("bye")), assistant(CallPipeline.FALLBACK_GOODBYE)));
+    }
+
+    @Test
+    void aGoodbyeFrameTheLegCannotPlayCountsAsAGoodbyeNotSpoken() {
+        HookedLeg leg = join(registry, new HookedLeg(FakeLeg.farmer(callId)));
+        leg.fake.finishPlayback();
+        AtomicBoolean failedOnce = new AtomicBoolean();
+        leg.play = frame -> {
+            if (failedOnce.compareAndSet(false, true)) {
+                throw new IllegalStateException("transport refused a frame (test)");
+            }
+            leg.fake.play(frame);
+        };
+
+        session().say("bye");
+        executor.runAll();
+
+        assertThat(spoken()).containsExactly(GREETING, replyTo("bye"), CallPipeline.FALLBACK_GOODBYE);
+        assertThat(leg.fake.isEnded()).isFalse();
+        leg.fake.finishPlayback();
+        executor.runAll();
+        assertThat(leg.fake.hungUpByUs()).isTrue();
+        assertThat(eventsOf(ConsoleEvent.CallEnded.class)).singleElement()
+                .satisfies(e -> assertThat(e.reason()).isEqualTo(CallPipeline.ASSISTANT_HANGUP));
+    }
+
+    @ParameterizedTest
+    @EnumSource(Failure.class)
+    void whenTheFixedGoodbyeFailsTooTheCallEndsAfterTheGraceWithoutClaimingItWasHeard(Failure how) {
+        FlakyTextToSpeech flaky = new FlakyTextToSpeech().fail(replyTo("bye"), Failure.FAILS_AFTER_ONE_FRAME)
+                .fail(CallPipeline.FALLBACK_GOODBYE, how);
+        FakeLeg leg = join(pipelineWith(store, flaky, stt, List.of(endedCalls::add)), FakeLeg.farmer(callId));
+        leg.finishPlayback();
+        int greetingFrames = leg.played().size();
+
+        session().say("bye");
+        executor.runAll();
+
+        assertThat(flaky.spoken()).containsExactly(GREETING, replyTo("bye"), CallPipeline.FALLBACK_GOODBYE);
+        long queuedMs = (leg.played().size() - greetingFrames) * (long) FakeTextToSpeech.FRAME_MS;
+        assertThat(delays.pendingDelaysMs()).containsExactly(queuedMs + GRACE_MS);
+
+        leg.finishPlayback(); // the partial audio played out; that is still no goodbye
+        executor.runAll();
+        assertThat(leg.isEnded()).isFalse();
+        assertThat(eventsOf(ConsoleEvent.CallEnded.class)).isEmpty();
+
+        delays.fireAll();
+
+        assertThat(eventsOf(ConsoleEvent.CallEnded.class)).singleElement()
+                .satisfies(e -> assertThat(e.reason()).isEqualTo(CallPipeline.GOODBYE_FAILED));
+        assertThat(eventsOf(ConsoleEvent.LegEnded.class)).singleElement()
+                .satisfies(e -> assertThat(e.reason()).isEqualTo(CallPipeline.GOODBYE_FAILED));
+        executor.runAll();
+        assertThat(leg.hungUpByUs()).isTrue();
+        assertThat(endedCalls).singleElement()
+                .satisfies(c -> assertThat(c.reason()).isEqualTo(CallPipeline.GOODBYE_FAILED));
+        assertThat(flaky.spoken()).as("the fixed goodbye is tried once").hasSize(3);
+    }
+
+    @Test
+    void theFarmerSpeakingWhileAFailedGoodbyeWaitsKeepsTheCallGoing() {
+        FlakyTextToSpeech flaky = new FlakyTextToSpeech().fail(replyTo("bye"), Failure.THROWS_ON_START)
+                .fail(CallPipeline.FALLBACK_GOODBYE, Failure.THROWS_ON_START);
+        FakeLeg leg = join(pipelineWith(store, flaky, stt, List.of(endedCalls::add)), FakeLeg.farmer(callId));
+        leg.finishPlayback();
+        session().say("bye");
+        executor.runAll();
+        assertThat(delays.pendingDelaysMs()).containsExactly(GRACE_MS);
+
+        session().emitSpeechStart(); // the farmer talks before the call ends
+        delays.fireAll();
+        executor.runAll();
+        assertThat(leg.isEnded()).isFalse();
+        assertThat(eventsOf(ConsoleEvent.CallEnded.class)).isEmpty();
+
+        session().emitTurn("ek aur baat");
+        executor.runAll();
+        assertThat(flaky.spoken()).containsExactly(GREETING, replyTo("bye"), CallPipeline.FALLBACK_GOODBYE,
+                replyTo("ek aur baat"));
+        assertThat(leg.isEnded()).isFalse();
     }
 
     @Test

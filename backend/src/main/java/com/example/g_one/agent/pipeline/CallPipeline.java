@@ -56,9 +56,17 @@ import org.slf4j.LoggerFactory;
  *       its generation before the session opens, so a turn heard first replaces it.</li>
  *   <li>Barge-in: speech start while the assistant is speaking (synthesising or still playing) clears the leg's queued
  *       audio and cancels the synthesis.</li>
+ *   <li>Speech start while the brain is still preparing a reply (or the greeting) holds that reply: it does not start
+ *       playing over the farmer. A final turn that follows discards it, as any newer turn does. If no final turn
+ *       arrives within the hold window (a cough, a noise), the held reply plays once it is ready, so the farmer is
+ *       never left in silence.</li>
  *   <li>A reply with {@link Reply#endCall()} hangs up once the leg reports it {@link PlaybackOutcome#PLAYED played}, or
  *       when that report has not come within the goodbye's length plus a grace period. A barge-in, a newer turn or a
  *       clear by anyone else cancels the hang-up and the conversation goes on.</li>
+ *   <li>A goodbye whose audio is missing or incomplete (synthesis failed to start, failed or was cancelled midway, or
+ *       produced no frames, or a frame could not be played) is never counted as heard. The pipeline says the fixed
+ *       {@link #FALLBACK_GOODBYE} once instead. If that fails too, it waits for the audio already queued plus the grace
+ *       period and then hangs up with reason {@code goodbye_failed}, unless the farmer speaks first.</li>
  *   <li>When the leg ends: close the session, cancel speech, publish {@code leg_ended} and {@code call_ended}, and run
  *       the end handlers in the background.</li>
  * </ol>
@@ -83,6 +91,23 @@ public final class CallPipeline {
      */
     public static final Duration DEFAULT_GOODBYE_GRACE = Duration.ofSeconds(8);
 
+    /**
+     * How long a reply held by the farmer's speech start waits for a final turn before it is released and played (a
+     * cough must not leave the farmer in silence).
+     */
+    public static final Duration DEFAULT_HELD_REPLY_RELEASE = Duration.ofMillis(1500);
+
+    /**
+     * Said instead of a goodbye whose audio could not be produced in full. The agent has no fixed per-language goodbye
+     * yet, so this short English word is used for every language.
+     */
+    static final String FALLBACK_GOODBYE = "Goodbye.";
+
+    /** Call end reason after a goodbye the farmer heard, or one whose "played" report never came. */
+    static final String ASSISTANT_HANGUP = "assistant_hangup";
+    /** Call end reason when neither the goodbye nor {@link #FALLBACK_GOODBYE} could be spoken. */
+    static final String GOODBYE_FAILED = "goodbye_failed";
+
     static final String HINDI_APOLOGY = "माफ़ कीजिए, कुछ गड़बड़ हो गई। कृपया फिर से बोलिए।";
     static final String ENGLISH_APOLOGY = "Sorry, something went wrong. Please say that again.";
 
@@ -101,18 +126,20 @@ public final class CallPipeline {
     private final Executor executor;
     private final LongSupplier clock;
     private final long goodbyeGraceMs;
+    private final long heldReplyReleaseMs;
     private final Delays delays;
 
     /**
-     * A pipeline with the {@link #DEFAULT_GOODBYE_GRACE} whose timers run on {@code executor}.
+     * A pipeline with the {@link #DEFAULT_GOODBYE_GRACE} and the {@link #DEFAULT_HELD_REPLY_RELEASE} whose timers run
+     * on {@code executor}.
      *
      * @see #CallPipeline(AgentBrain, SpeechToText, TextToSpeech, MemoryStore, ConsoleBus, List, Executor,
-     *     LongSupplier, Duration, Delays)
+     *     LongSupplier, Duration, Duration, Delays)
      */
     public CallPipeline(AgentBrain brain, SpeechToText speechToText, TextToSpeech textToSpeech, MemoryStore memory,
                         ConsoleBus bus, List<CallEndHandler> endHandlers, Executor executor, LongSupplier clock) {
         this(brain, speechToText, textToSpeech, memory, bus, endHandlers, executor, clock, DEFAULT_GOODBYE_GRACE,
-                executorDelays(executor));
+                DEFAULT_HELD_REPLY_RELEASE, executorDelays(executor));
     }
 
     /**
@@ -121,11 +148,12 @@ public final class CallPipeline {
      *     run tasks on the submitting thread (tests use a manual executor that runs them when told)
      * @param clock epoch milliseconds for console events and call times
      * @param goodbyeGrace how long past the goodbye's length to wait for the leg to confirm it was heard
-     * @param delays runs the goodbye timeout
+     * @param heldReplyRelease how long a reply held by the farmer's speech start waits for a final turn before it plays
+     * @param delays runs the goodbye timeouts and the held-reply release
      */
     public CallPipeline(AgentBrain brain, SpeechToText speechToText, TextToSpeech textToSpeech, MemoryStore memory,
                         ConsoleBus bus, List<CallEndHandler> endHandlers, Executor executor, LongSupplier clock,
-                        Duration goodbyeGrace, Delays delays) {
+                        Duration goodbyeGrace, Duration heldReplyRelease, Delays delays) {
         this.brain = Objects.requireNonNull(brain, "brain");
         this.speechToText = Objects.requireNonNull(speechToText, "speechToText");
         this.textToSpeech = Objects.requireNonNull(textToSpeech, "textToSpeech");
@@ -138,6 +166,10 @@ public final class CallPipeline {
             throw new IllegalArgumentException("goodbyeGrace must not be negative");
         }
         this.goodbyeGraceMs = goodbyeGrace.toMillis();
+        if (heldReplyRelease.isNegative()) {
+            throw new IllegalArgumentException("heldReplyRelease must not be negative");
+        }
+        this.heldReplyReleaseMs = heldReplyRelease.toMillis();
         this.delays = Objects.requireNonNull(delays, "delays");
     }
 
@@ -200,9 +232,13 @@ public final class CallPipeline {
         private volatile boolean feedFailureLogged;
 
         private long greetingGeneration;
+        /** The generation whose reply (or greeting) the brain is preparing; 0 when none is on the way. */
+        private long thinkingFor;
+        /** A reply the farmer started speaking over before it was ready; null when nothing is held. */
+        private Hold hold;
         private CallContext context;
         private SttSession session;
-        /** What the assistant is saying right now; null while it is silent. */
+        /** What the assistant is saying right now; null while it is silent. Never set while {@link #hold} is. */
         private Utterance speaking;
 
         FarmerLeg(Leg leg) {
@@ -226,6 +262,7 @@ public final class CallPipeline {
             publish(ConsoleEvent.LegJoined.of(leg, startedMs));
             // Reserved now: a turn heard before the greeting is ready moves the generation on and replaces it.
             greetingGeneration = ++generation;
+            thinkingFor = greetingGeneration;
             background("load memory", this::loadMemory);
         }
 
@@ -335,12 +372,54 @@ public final class CallPipeline {
 
         /** In the mailbox. */
         private void speechStarted() {
-            if (ended || speaking == null) {
-                return; // the assistant is silent: nothing to interrupt
+            if (ended) {
+                return;
             }
-            log.debug("Barge-in on leg {}", leg.id());
-            generation++;
-            stopSpeaking();
+            if (speaking != null) {
+                log.debug("Barge-in on leg {}", leg.id());
+                generation++;
+                stopSpeaking();
+                return;
+            }
+            if (thinkingFor == generation && hold == null) {
+                holdReply();
+            }
+            // Otherwise the assistant is silent with nothing on the way, or a reply is already held: nothing to do.
+        }
+
+        /**
+         * In the mailbox, on speech start while the brain prepares the current reply: hold that reply so it does not
+         * start over the farmer. A final turn discards it ({@link #turnHeard}); otherwise {@link #holdExpired} lets it
+         * play after the hold window. Another speech start during the hold does not extend the window.
+         */
+        private void holdReply() {
+            Hold h = new Hold(generation);
+            hold = h;
+            log.debug("The farmer started speaking while the assistant was thinking on leg {}; holding the reply",
+                    leg.id());
+            try {
+                delays.schedule(heldReplyReleaseMs, () -> mailbox.post(() -> holdExpired(h)));
+            } catch (RuntimeException e) {
+                hold = null; // without its release timer a held reply could wait forever, so do not hold
+                log.warn("Could not start the held-reply timer on leg {}; not holding the reply", leg.id(), e);
+            }
+        }
+
+        /** In the mailbox: no final turn followed the speech start in time, so the held reply may play. */
+        private void holdExpired(Hold h) {
+            if (hold != h) {
+                return; // a final turn or the end came first
+            }
+            hold = null;
+            if (ended || generation != h.generation) {
+                return; // cannot happen while the hold is current; kept so a held reply never outlives its turn
+            }
+            if (h.reply == null) {
+                log.debug("No turn followed the speech start on leg {}; the reply plays when it is ready", leg.id());
+                return;
+            }
+            log.debug("No turn followed the speech start on leg {}; playing the held reply", leg.id());
+            speak(new Utterance(h.reply, false, 0));
         }
 
         /** In the mailbox. */
@@ -351,6 +430,11 @@ public final class CallPipeline {
             List<Line> history = List.copyOf(lines);
             lines.add(new Line(Speaker.FARMER, turn.text()));
             long g = ++generation;
+            thinkingFor = g;
+            if (hold != null) {
+                log.debug("A turn followed the speech start on leg {}; discarding the held reply", leg.id());
+                hold = null;
+            }
             if (speaking != null) {
                 stopSpeaking(); // a turn with no speech start first still interrupts the assistant
             }
@@ -370,21 +454,38 @@ public final class CallPipeline {
             mailbox.post(() -> replyReady(g, reply));
         }
 
-        /** In the mailbox: speaks {@code reply} unless a newer turn, a barge-in or the end superseded {@code g}. */
+        /**
+         * In the mailbox: speaks {@code reply} unless a newer turn, a barge-in or the end superseded {@code g}. While
+         * the farmer may still be speaking ({@link #hold}), the reply waits in the hold instead.
+         */
         private void replyReady(long g, Reply reply) {
             if (ended || generation != g) {
                 log.debug("Dropping a superseded reply on leg {}", leg.id());
                 return;
             }
-            // Every generation change stops the current utterance, so nothing else is being said now.
+            thinkingFor = 0;
+            if (hold != null && hold.generation == g) {
+                hold.reply = reply; // played by holdExpired, or discarded by the next final turn
+                log.debug("A reply is ready on leg {} but held: the farmer started speaking", leg.id());
+                return;
+            }
+            speak(new Utterance(reply, false, 0));
+        }
+
+        /**
+         * In the mailbox, for the current generation: records and publishes {@code u}, then starts its synthesis.
+         * Every generation change stops the current utterance, so nothing else is being said now.
+         */
+        private void speak(Utterance u) {
+            Reply reply = u.reply;
             lines.add(new Line(Speaker.ASSISTANT, reply.text()));
             if (!reply.language().equals(context.language())) {
                 context = new CallContext(callId, leg, reply.language(), context.memory());
             }
-            Utterance u = new Utterance(reply);
             speaking = u;
             publish(new ConsoleEvent.AssistantSaid(callId, now(), leg.id(), LegRole.FARMER, reply.language().code(),
                     reply.text()));
+            long g = generation;
             background("speak", () -> synthesise(g, u));
         }
 
@@ -399,7 +500,7 @@ public final class CallPipeline {
                         frame -> mailbox.post(() -> framePlayed(u, frame)));
             } catch (RuntimeException e) {
                 log.warn("Speech synthesis failed to start on leg {}", leg.id(), e);
-                mailbox.post(() -> allQueued(u));
+                mailbox.post(() -> allQueued(u, false));
                 return;
             }
             mailbox.post(() -> synthesisStarted(u, started));
@@ -413,10 +514,16 @@ public final class CallPipeline {
             }
             u.synthesis = started;
             started.done().whenComplete((ignored, error) -> {
-                if (error != null && !isCancellation(error)) {
-                    log.warn("Speech synthesis failed on leg {}", leg.id(), error);
+                // The pipeline cancels only utterances it already stopped, and allQueued ignores those. So a current
+                // utterance that sees a cancellation was cancelled elsewhere, and its audio is incomplete.
+                if (error != null) {
+                    if (isCancellation(error)) {
+                        log.warn("Speech synthesis was cancelled by someone else on leg {}", leg.id());
+                    } else {
+                        log.warn("Speech synthesis failed on leg {}", leg.id(), error);
+                    }
                 }
-                mailbox.post(() -> allQueued(u));
+                mailbox.post(() -> allQueued(u, error == null));
             });
         }
 
@@ -428,21 +535,32 @@ public final class CallPipeline {
             try {
                 leg.play(frame);
                 u.queuedMs += frame.durationMs();
+                u.framesQueued++;
             } catch (RuntimeException e) {
+                u.playFailed = true;
                 log.warn("Playing audio failed on leg {}", leg.id(), e);
             }
         }
 
         /**
-         * In the mailbox. Every frame of {@code u} is queued (or synthesis failed): wait for the farmer to hear it, and
-         * for a goodbye start the timeout. Frames reach the mailbox before the synthesis completes, so this always runs
-         * after the last {@link #framePlayed}.
+         * In the mailbox. Every frame of {@code u} is queued, or synthesis failed: wait for the farmer to hear it, and
+         * for a goodbye start the timeout. A goodbye whose audio is incomplete is never waited on as if it could be
+         * heard ({@link #goodbyeNotSpoken}). Frames reach the mailbox before the synthesis completes, so this always
+         * runs after the last {@link #framePlayed}.
+         *
+         * @param synthesised true when the synthesis completed normally; false when it failed to start, failed, or was
+         *     cancelled by someone else
          */
-        private void allQueued(Utterance u) {
+        private void allQueued(Utterance u, boolean synthesised) {
             if (speaking != u) {
                 return;
             }
             u.synthesis = null;
+            boolean complete = synthesised && u.framesQueued > 0 && !u.playFailed;
+            if (u.reply.endCall() && !complete) {
+                goodbyeNotSpoken(u);
+                return;
+            }
             CompletableFuture<PlaybackOutcome> heard;
             try {
                 heard = leg.playbackDone();
@@ -460,6 +578,42 @@ public final class CallPipeline {
             }
         }
 
+        /**
+         * In the mailbox, for a current goodbye whose audio is missing or incomplete. The first time, say the fixed
+         * {@link #FALLBACK_GOODBYE} instead, after whatever part of the goodbye was queued. If that fails too, there is
+         * no goodbye to wait for: hang up with reason {@link #GOODBYE_FAILED} once the audio already queued and the
+         * grace period have passed. Until then the assistant counts as speaking, so the farmer speaking still
+         * interrupts it and the call goes on.
+         */
+        private void goodbyeNotSpoken(Utterance u) {
+            if (!u.fallback) {
+                log.info("The goodbye on leg {} could not be synthesised in full; saying the fixed goodbye instead",
+                        leg.id());
+                speak(new Utterance(new Reply(FALLBACK_GOODBYE, u.reply.language(), true), true, u.queuedMs));
+                return;
+            }
+            long waitMs = u.queuedMs + goodbyeGraceMs;
+            log.info("The fixed goodbye on leg {} could not be synthesised in full either; ending call {} in {} ms "
+                    + "without a goodbye", leg.id(), callId, waitMs);
+            try {
+                delays.schedule(waitMs, () -> mailbox.post(() -> unspokenGoodbyeTimedOut(u)));
+            } catch (RuntimeException e) {
+                log.warn("Could not start the goodbye timeout on leg {}; ending call {} now", leg.id(), callId, e);
+                speaking = null;
+                hangUp(GOODBYE_FAILED);
+            }
+        }
+
+        /** In the mailbox. */
+        private void unspokenGoodbyeTimedOut(Utterance u) {
+            if (speaking != u) {
+                return; // the farmer spoke, or the leg ended, in the meantime
+            }
+            log.info("Ending call {} without a goodbye: none could be spoken on leg {}", callId, leg.id());
+            speaking = null;
+            hangUp(GOODBYE_FAILED);
+        }
+
         /** In the mailbox. */
         private void playbackFinished(Utterance u, PlaybackOutcome outcome, Throwable error) {
             if (speaking != u) {
@@ -475,8 +629,9 @@ public final class CallPipeline {
                 case PLAYED -> {
                     speaking = null;
                     if (u.reply.endCall()) {
-                        log.info("The farmer heard the goodbye; the assistant is ending call {}", callId);
-                        hangUp();
+                        log.info("The farmer heard the {}goodbye; the assistant is ending call {}",
+                                u.fallback ? "fixed " : "", callId);
+                        hangUp(ASSISTANT_HANGUP);
                     }
                 }
                 case CLEARED -> {
@@ -498,7 +653,7 @@ public final class CallPipeline {
             log.warn("Leg {} did not confirm the goodbye within {} ms; the assistant is ending call {} anyway",
                     leg.id(), waitedMs, callId);
             speaking = null;
-            hangUp();
+            hangUp(ASSISTANT_HANGUP);
         }
 
         /**
@@ -506,8 +661,8 @@ public final class CallPipeline {
          * here, in the same task, means no turn or barge-in can slip in between that check and the hang-up: anything
          * that arrives later sees an ended leg. The transport hang-up itself may block, so it runs in the background.
          */
-        private void hangUp() {
-            finish("assistant_hangup");
+        private void hangUp(String reason) {
+            finish(reason);
             cleanUp("hang up", () -> {
                 try {
                     leg.hangup();
@@ -542,6 +697,8 @@ public final class CallPipeline {
             }
             ended = true;
             generation++;
+            hold = null;
+            thinkingFor = 0;
             Utterance u = speaking;
             speaking = null;
             SttSession toClose = session;
@@ -645,13 +802,35 @@ public final class CallPipeline {
      */
     private static final class Utterance {
         final Reply reply;
+        /** True for the {@link #FALLBACK_GOODBYE} said after a goodbye that could not be spoken. */
+        final boolean fallback;
         /** Set while the synthesis runs. */
         Synthesis synthesis;
-        /** Length of the audio queued on the leg so far. */
+        /** Length of the audio queued on the leg so far, including a failed goodbye's part before its fallback. */
         long queuedMs;
+        /** Frames of this utterance queued on the leg. */
+        int framesQueued;
+        /** True once a frame of this utterance could not be queued. */
+        boolean playFailed;
 
-        Utterance(Reply reply) {
+        Utterance(Reply reply, boolean fallback, long queuedBeforeMs) {
             this.reply = reply;
+            this.fallback = fallback;
+            this.queuedMs = queuedBeforeMs;
+        }
+    }
+
+    /**
+     * A reply held because the farmer started speaking while it was being prepared. Fields are touched only in the
+     * leg's mailbox; identity tells the current hold from an expired or discarded one.
+     */
+    private static final class Hold {
+        final long generation;
+        /** The reply once the brain has it; null while it is still being prepared. */
+        Reply reply;
+
+        Hold(long generation) {
+            this.generation = generation;
         }
     }
 
