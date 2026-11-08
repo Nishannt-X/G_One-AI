@@ -56,3 +56,9 @@ g-one:
     access-code: ${G_ONE_ACCESS_CODE:}
     # Local dev only: with no access code, serve /api/memory/** to direct loopback requests (never via a tunnel).
     dev-open: ${G_ONE_MEMORY_DEV_OPEN:false}
+  # The call pipeline (agent/pipeline, #23).
+  pipeline:
+    # How long past the goodbye's own length to wait for the leg to confirm the farmer heard it, then hang up anyway.
+    goodbye-grace-ms: ${G_ONE_PIPELINE_GOODBYE_GRACE_MS:8000}
+    # How long a reply held because the farmer started speaking waits for a final turn before it plays anyway.
+    held-reply-release-ms: ${G_ONE_PIPELINE_HELD_REPLY_RELEASE_MS:1500}

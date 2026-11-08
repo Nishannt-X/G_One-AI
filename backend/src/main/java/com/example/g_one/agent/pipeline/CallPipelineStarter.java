@@ -33,7 +33,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>Brain calls, memory loads and end handlers run on virtual threads, one per task.
  *
- * <p>Settings (not in {@code application.yml}; the defaults apply unless set):
+ * <p>Settings (in {@code application.yml}; the defaults below also apply when a key is missing):
  * <ul>
  *   <li>{@code g-one.pipeline.goodbye-grace-ms} (default 8000): how long past the goodbye's length the assistant waits
  *       for the leg to confirm the farmer heard it before hanging up anyway.</li>

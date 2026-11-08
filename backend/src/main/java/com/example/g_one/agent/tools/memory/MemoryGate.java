@@ -153,6 +153,27 @@ public class MemoryGate implements DisposableBean {
                 ? new Entry(State.OTHER_SPEAKER, clock.millis(), false) : e);
     }
 
+    /**
+     * Starts {@code forget_me}: in one atomic step, reads the call's state and, when it {@link State#mayForget},
+     * marks the call {@link State#FORGOTTEN} before anything is deleted. A forget that has started but not finished
+     * therefore already reads as {@code FORGOTTEN}, so a hang-up that reads the state while the store is still
+     * deleting writes and summarizes nothing. Any other state is left as it is.
+     *
+     * @return the state before this call; the call is {@code FORGOTTEN} afterwards only when that state may forget
+     */
+    public State beginForget(CallContext ctx) {
+        long now = clock.millis();
+        State[] before = new State[1];
+        calls.compute(ctx.callId(), (id, e) -> {
+            State current = e != null ? e.state()
+                    : dropped.containsKey(id) ? State.OTHER_SPEAKER : initial(ctx.memory());
+            before[0] = current;
+            if (current.mayForget()) return new Entry(State.FORGOTTEN, now, false);
+            return new Entry(current, now, e != null && e.heardYes());
+        });
+        return before[0];
+    }
+
     /** Memory is off for the rest of the call after {@code forget_me}. */
     public void forgotten(CallContext ctx) {
         calls.put(ctx.callId(), new Entry(State.FORGOTTEN, clock.millis(), false));

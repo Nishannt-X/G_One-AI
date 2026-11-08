@@ -112,6 +112,36 @@ class MemoryGateTest {
     }
 
     @Test
+    void beginForgetMarksTheCallForgottenOnlyWhenAForgetIsAllowed() {
+        // A first-time caller may forget: the call reads FORGOTTEN from that moment, before any deletion.
+        CallId id = CallId.random();
+        CallContext first = new CallContext(id, new FakeLeg(id, LegRole.FARMER, LegSource.SIMULATOR, FakeLeg.HINDI,
+                FakeLeg.FARMER_KEY), FakeLeg.HINDI, FarmerMemory.empty(FakeLeg.FARMER_KEY));
+        assertThat(gate.beginForget(first)).isEqualTo(MemoryGate.State.NEW);
+        assertThat(gate.peek(first.callId())).contains(MemoryGate.State.FORGOTTEN);
+        assertThat(gate.beginForget(first)).as("a second forget_me is allowed").isEqualTo(MemoryGate.State.FORGOTTEN);
+
+        // A returning farmer who has not answered the name check may not: the state stays as it is.
+        CallContext unanswered = returning();
+        assertThat(gate.beginForget(unanswered)).isEqualTo(MemoryGate.State.NAME_CHECK);
+        assertThat(gate.peek(unanswered.callId())).contains(MemoryGate.State.NAME_CHECK);
+
+        // A confirmed farmer may.
+        CallContext confirmed = returning();
+        gate.heardNameCheckReply(confirmed, "haan ji");
+        assertThat(gate.answerNameCheck(confirmed, true)).isEqualTo(MemoryGate.State.CONFIRMED);
+        assertThat(gate.beginForget(confirmed)).isEqualTo(MemoryGate.State.CONFIRMED);
+        assertThat(gate.peek(confirmed.callId())).contains(MemoryGate.State.FORGOTTEN);
+
+        // A call whose state was dropped fails closed as someone else and is not marked.
+        CallContext ended = returning();
+        gate.state(ended);
+        gate.end(ended.callId());
+        assertThat(gate.beginForget(ended)).isEqualTo(MemoryGate.State.OTHER_SPEAKER);
+        assertThat(gate.peek(ended.callId())).contains(MemoryGate.State.OTHER_SPEAKER);
+    }
+
+    @Test
     void redactHidesLongDigitRunsButKeepsDatesAndShortNumbers() {
         assertThat(Redact.digits("call +91 98765 43210 or 98765-43210")).isEqualTo("call [number] or [number]");
         assertThat(Redact.digits("OTP 482 913")).isEqualTo("OTP [number]");

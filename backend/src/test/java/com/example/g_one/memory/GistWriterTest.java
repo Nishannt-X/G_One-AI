@@ -100,7 +100,7 @@ class GistWriterTest {
                         Map.of("field", "phone", "value", "a number"),
                         Map.of("field", "buyerName", "value", "Shinde"))));
 
-        GistWriter.Result r = writer.write(FarmerMemory.empty(SURESH),
+        GistWriter.Result r = writer.write(memory(),
                 transcript("Haan, main Suresh. Bees quintal pyaaz taiyaar hai."));
 
         assertThat(r.status()).isEqualTo(GistWriter.Status.WRITTEN);
@@ -137,7 +137,7 @@ class GistWriterTest {
                         Map.of("field", "village", "value", "Plot 4567891 Lasalgaon"),
                         Map.of("field", "name", "value", "Suresh"))));
 
-        writer.write(FarmerMemory.empty(SURESH),
+        writer.write(memory(),
                 transcript("Mera OTP 482913 hai", "Number +91 98765 43210 pe bhejo", "Rate 1,200 per quintal"));
 
         String sent = llm.requests().get(0).toString();
@@ -157,7 +157,7 @@ class GistWriterTest {
         llmAnswers(Map.of("gist", String.join(" ", Collections.nCopies(120, "word")), "followUps", List.of(),
                 "profileUpdates", List.of()));
 
-        writer.write(FarmerMemory.empty(SURESH), transcript("hello"));
+        writer.write(memory(), transcript("hello"));
 
         String summary = memory().gists().get(0).summary();
         assertThat(summary.split("\\s+")).hasSize(GistWriter.MAX_GIST_WORDS);
@@ -192,23 +192,107 @@ class GistWriterTest {
     }
 
     @Test
-    void afterForgetMeTheHangUpGistAndFactsAreDropped() throws Exception {
+    void afterAForgetDuringTheCallNothingIsSummarizedOrWritten() throws Exception {
         store.saveGist(SURESH, new CallGist(CallId.of("c-1103"), START - DAY, START - DAY + 60_000, "Earlier call.",
                 List.of()));
+        FarmerMemory atStart = memory();
         assertThat(store.forget(SURESH, CALL, START + 5_000)).isTrue();
         llmAnswers(Map.of("gist", "Suresh asked to be forgotten.", "followUps", List.of(),
                 "profileUpdates", List.of(Map.of("field", "name", "value", "Suresh"))));
 
-        writer.write(FarmerMemory.of(SURESH, List.of(SAID_DISTRICT), List.of()), transcript("Mujhe bhool jao"));
+        GistWriter.Result r = writer.write(atStart, transcript("Mujhe bhool jao"));
 
+        assertThat(r.status()).isEqualTo(GistWriter.Status.SKIPPED_FORGOTTEN);
+        assertThat(r.gist()).isEmpty();
+        assertThat(llm.requests()).as("the forgotten call never reaches the summarizer").isEmpty();
         assertThat(store.load(SURESH)).isEmpty();
+    }
+
+    @Test
+    void aFirstTimeCallerWhoAskedToBeForgottenIsStillDroppedByTheTombstone() throws Exception {
+        MemoryStore fresh = new InMemoryMemoryStore();
+        assertThat(fresh.forget(SURESH, CALL, START + 5_000)).isFalse();
+        llmAnswers(Map.of("gist", "A caller asked to be forgotten.", "followUps", List.of(),
+                "profileUpdates", List.of(Map.of("field", "name", "value", "Suresh"))));
+        try (GistWriter w = writerFor(fresh, llm.baseUrl(), FakeLlm.KEY, "fake-model")) {
+            w.write(FarmerMemory.empty(SURESH), transcript("Mujhe bhool jao"));
+        }
+
+        assertThat(fresh.load(SURESH)).isEmpty();
+    }
+
+    @Test
+    void theSummarizerSeesOnlyTheCallStartSnapshot() throws Exception {
+        FarmerMemory atStart = memory();
+        // Written to the store after this call started: this call was never shown it, so the summarizer must not be.
+        store.upsertFacts(SURESH, List.of(new ProfileFact("village", "Pimpalgaon",
+                Provenance.said(CallId.of("c-1107"), START + 1_000))));
+        store.saveGist(SURESH, new CallGist(CallId.of("c-1107"), START + 1_000, START + 2_000, "A later call.",
+                List.of("Send the Pimpalgaon pickup time")));
+        llmAnswers(Map.of("gist", "Suresh asked about onion.",
+                "followUps", List.of(Map.of("text", "Send the Pimpalgaon pickup time", "status", "DONE")),
+                "profileUpdates", List.of()));
+
+        writer.write(atStart, transcript("Pyaaz ka bhaav?"));
+
+        String user = llm.requests().get(0).path("messages").path(1).path("content").asText();
+        assertThat(user).contains("Nashik").doesNotContain("Pimpalgaon").doesNotContain("A later call");
+        assertThat(openFollowUps(store)).as("a follow-up the call was never shown is not closed")
+                .containsExactly("Send the Pimpalgaon pickup time");
+    }
+
+    @Test
+    void aNewCallNeverReadsTheStoredProfile() throws Exception {
+        // A profile for the number exists in the store, but this call started with none (a first-time caller).
+        store.saveGist(SURESH, new CallGist(CallId.of("c-1103"), START - DAY, START - DAY + 60_000,
+                "Suresh wants a buyer.", List.of("Find a buyer for red onion")));
+        List<CallerKey> loads = new ArrayList<>();
+        MemoryStore watched = new MemoryStore() {
+            @Override
+            public Optional<FarmerMemory> load(CallerKey key) {
+                loads.add(key);
+                return store.load(key);
+            }
+
+            @Override
+            public void saveGist(CallerKey key, CallGist gist) {
+                store.saveGist(key, gist);
+            }
+
+            @Override
+            public void upsertFacts(CallerKey key, List<ProfileFact> facts) {
+                store.upsertFacts(key, facts);
+            }
+
+            @Override
+            public boolean forget(CallerKey key, CallId duringCall, long atMs) {
+                return store.forget(key, duringCall, atMs);
+            }
+        };
+        llmAnswers(Map.of("gist", "A caller asked about onion.",
+                "followUps", List.of(Map.of("id", "F1", "text", "Find a buyer for red onion", "status", "DONE")),
+                "profileUpdates", List.of(Map.of("field", "crops", "value", "garlic"))));
+
+        GistWriter.Result r;
+        try (GistWriter w = writerFor(watched, llm.baseUrl(), FakeLlm.KEY, "fake-model")) {
+            r = w.write(FarmerMemory.empty(SURESH), transcript("Pyaaz ka bhaav?"));
+        }
+
+        assertThat(loads).as("no store read for a new call").isEmpty();
+        String user = llm.requests().get(0).path("messages").path(1).path("content").asText();
+        assertThat(JSON.readTree(user).path("profile").isEmpty()).isTrue();
+        assertThat(JSON.readTree(user).path("openFollowUps").isEmpty()).isTrue();
+        assertThat(user).doesNotContain("Nashik").doesNotContain("Find a buyer");
+        assertThat(r.facts()).extracting(ProfileFact::field).containsExactly("crop:garlic");
+        assertThat(openFollowUps(store)).as("the stored follow-up was never shown, so it stays open")
+                .containsExactly("Find a buyer for red onion");
     }
 
     @Test
     void whenTheLlmFailsTwiceATemplateGistIsWritten() {
         llm.failures.set(2);
 
-        GistWriter.Result r = writer.write(FarmerMemory.empty(SURESH),
+        GistWriter.Result r = writer.write(memory(),
                 transcript("Red onion bechna hai").withOutcome(CallTranscript.Outcome.DEAL_CONFIRMED));
 
         assertThat(llm.requests()).hasSize(2);
@@ -223,7 +307,7 @@ class GistWriterTest {
         llm.failures.set(1);
         llmAnswers(Map.of("gist", "Asked the tomato price.", "followUps", List.of(), "profileUpdates", List.of()));
 
-        GistWriter.Result r = writer.write(FarmerMemory.empty(SURESH), transcript("Tamatar ka bhaav?"));
+        GistWriter.Result r = writer.write(memory(), transcript("Tamatar ka bhaav?"));
 
         assertThat(llm.requests()).hasSize(2);
         assertThat(r.source()).isEqualTo(GistWriter.Source.SUMMARIZER);
@@ -233,7 +317,7 @@ class GistWriterTest {
     @Test
     void anUnconfiguredLlmGivesTheTemplateWithoutAnyRequest() {
         try (GistWriter w = writerFor(store, "", "", "")) {
-            GistWriter.Result r = w.write(FarmerMemory.empty(SURESH), transcript("Kuch nahin"));
+            GistWriter.Result r = w.write(memory(), transcript("Kuch nahin"));
 
             assertThat(r.source()).isEqualTo(GistWriter.Source.TEMPLATE);
         }
@@ -245,7 +329,7 @@ class GistWriterTest {
     void anEmptyLlmGistFallsBackToTheTemplateButKeepsFollowUps() throws Exception {
         llmAnswers(Map.of("gist", "  ", "followUps", List.of("Call back"), "profileUpdates", List.of()));
 
-        GistWriter.Result r = writer.write(FarmerMemory.empty(SURESH), transcript("hello"));
+        GistWriter.Result r = writer.write(memory(), transcript("hello"));
 
         assertThat(r.source()).isEqualTo(GistWriter.Source.TEMPLATE);
         assertThat(memory().gists().get(0).followUps()).containsExactly("Call back");
@@ -256,7 +340,7 @@ class GistWriterTest {
         llmAnswers(Map.of("gist", "Someone asked about onion prices.", "followUps", List.of(),
                 "profileUpdates", List.of(Map.of("field", "name", "value", "Ramesh"))));
 
-        GistWriter.Result r = writer.write(FarmerMemory.empty(SURESH),
+        GistWriter.Result r = writer.write(memory(),
                 transcript("Nahin, main Ramesh hoon").withOtherSpeaker(true));
 
         assertThat(r.facts()).isEmpty();
@@ -272,7 +356,7 @@ class GistWriterTest {
         llmAnswers(Map.of("gist", "Someone asked about onion prices.", "followUps", List.of(),
                 "profileUpdates", List.of()));
 
-        writer.write(FarmerMemory.empty(SURESH), transcript("Nahin, main Ramesh hoon").withOtherSpeaker(true));
+        writer.write(memory(), transcript("Nahin, main Ramesh hoon").withOtherSpeaker(true));
 
         String user = llm.requests().get(0).path("messages").path(1).path("content").asText();
         assertThat(user).doesNotContain("Nashik").doesNotContain("red onion").doesNotContain("Find a buyer")
@@ -284,7 +368,7 @@ class GistWriterTest {
     void anotherSpeakersTemplateGistNamesNoStoredCrop() {
         llm.failures.set(2);
 
-        GistWriter.Result r = writer.write(FarmerMemory.empty(SURESH),
+        GistWriter.Result r = writer.write(memory(),
                 transcript("Red onion ka bhaav kya hai?").withOtherSpeaker(true));
 
         assertThat(r.source()).isEqualTo(GistWriter.Source.TEMPLATE);
@@ -334,7 +418,7 @@ class GistWriterTest {
                             Map.of("id", "F1", "text", "Find a buyer for red onion", "status", "DONE"),
                             Map.of("text", "Send the pickup time", "status", "OPEN")),
                     "profileUpdates", List.of()));
-            w.write(FarmerMemory.empty(SURESH), call(two, START - 3 * DAY, "Buyer mil gaya, shukriya"));
+            w.write(s.load(SURESH).orElseThrow(), call(two, START - 3 * DAY, "Buyer mil gaya, shukriya"));
 
             String sentInCallTwo = llm.requests().get(1).path("messages").path(1).path("content").asText();
             assertThat(JSON.readTree(sentInCallTwo).path("openFollowUps").toString())
@@ -350,7 +434,7 @@ class GistWriterTest {
 
             llmAnswers(Map.of("gist", "Suresh asked about tomato.", "followUps", List.of(),
                     "profileUpdates", List.of()));
-            w.write(FarmerMemory.empty(SURESH), call(three, START, "Tamatar ka kya?"));
+            w.write(s.load(SURESH).orElseThrow(), call(three, START, "Tamatar ka kya?"));
             String sentInCallThree = llm.requests().get(2).path("messages").path(1).path("content").asText();
             assertThat(JSON.readTree(sentInCallThree).path("openFollowUps").toString())
                     .doesNotContain("Find a buyer").contains("Ask about the tomato crop", "Send the pickup time");
@@ -375,7 +459,7 @@ class GistWriterTest {
                             Map.of("text", "Call the bank", "status", "DONE")),
                     "profileUpdates", List.of()));
 
-            w.write(FarmerMemory.empty(SURESH), call(CallId.of("c-1108"), START, "Buyer mil gaya"));
+            w.write(s.load(SURESH).orElseThrow(), call(CallId.of("c-1108"), START, "Buyer mil gaya"));
 
             assertThat(openFollowUps(s)).as("F9 was never shown; Call the bank matches nothing")
                     .containsExactly("Ask about the tomato crop");
@@ -392,7 +476,7 @@ class GistWriterTest {
                 List.of(Map.of("id", "F1", "text", "Find a buyer for red onion", "status", "DONE")),
                 "profileUpdates", List.of()));
 
-        writer.write(FarmerMemory.empty(SURESH), transcript("Nahin, main Ramesh").withOtherSpeaker(true));
+        writer.write(memory(), transcript("Nahin, main Ramesh").withOtherSpeaker(true));
 
         assertThat(openFollowUps(store)).containsExactly("Find a buyer for red onion");
     }
@@ -403,7 +487,7 @@ class GistWriterTest {
         store.saveGist(SURESH, new CallGist(earlier, START - DAY, START - DAY + 60_000,
                 "Suresh wants a buyer.", List.of("Find a buyer for red onion")));
         FarmerMemory loaded = store.load(SURESH).orElseThrow();
-        // The writer loaded memory before the forget; the rewrite of the earlier gist must still be dropped.
+        // The forget lands just after the writer's forget check; the rewrite of the earlier gist must still be dropped.
         MemoryStore racing = new MemoryStore() {
             private boolean forgotten;
 
@@ -436,7 +520,7 @@ class GistWriterTest {
                 List.of(Map.of("id", "F1", "text", "Find a buyer for red onion", "status", "DONE")),
                 "profileUpdates", List.of()));
         try (GistWriter w = writerFor(racing, llm.baseUrl(), FakeLlm.KEY, "fake-model")) {
-            w.write(FarmerMemory.empty(SURESH), transcript("Buyer mil gaya"));
+            w.write(loaded, transcript("Buyer mil gaya"));
         }
 
         assertThat(store.load(SURESH)).isEmpty();
@@ -446,7 +530,7 @@ class GistWriterTest {
     void writeAsyncRunsInTheBackground() throws Exception {
         llmAnswers(Map.of("gist", "Async gist.", "followUps", List.of(), "profileUpdates", List.of()));
 
-        GistWriter.Result r = writer.writeAsync(FarmerMemory.empty(SURESH), transcript("hi"))
+        GistWriter.Result r = writer.writeAsync(memory(), transcript("hi"))
                 .get(10, TimeUnit.SECONDS);
 
         assertThat(r.gist().orElseThrow().summary()).isEqualTo("Async gist.");
