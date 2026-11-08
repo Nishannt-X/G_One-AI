@@ -67,11 +67,13 @@ public final class MemoryBlock {
     /** The {@code memory} rules of the system prompt for this call's state. Never contains stored values. */
     public static String forPrompt(MemoryGate.State state) {
         return switch (state) {
-            case NEW -> "Nothing is remembered about this caller yet: this is the first call from this number.";
+            case NEW -> "Nothing is remembered about this caller yet: this is the first call from this number. If "
+                    + "the farmer tells you their name, save it first with save_profile_fact (field name), before any "
+                    + "other fact, so the next call can check that it is them.";
             case WITHHELD -> "Memory is off for this call because the caller ID is withheld. Nothing is remembered "
                     + "and nothing can be saved.";
             case UNNAMED -> "Nothing remembered may be used on this call. Treat the caller as a new farmer, and do not "
-                    + "save facts.";
+                    + "save facts. If they ask to be forgotten, forget_me still works for this number.";
             case NAME_CHECK -> "The greeting asked whether you are speaking with the remembered farmer, using the "
                     + "nameToCheck in the memory data message. When the farmer answers, first call confirm_name: "
                     + "confirmed true only for a clear yes, false for a no or anything unclear. Until then, do not use, "

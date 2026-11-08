@@ -20,9 +20,10 @@ import org.springframework.stereotype.Component;
  * ({@link MemoryStore#forget}, which also keeps the rest of this call from writing), turns memory off for the rest of
  * the call, and hands the model the fixed spoken confirmation from docs/memory.md.
  *
- * <p>Deletes nothing when the caller ID is withheld (nothing is stored), while the name check is unanswered, when the
- * memory has no name to check it with, or when the speaker is not the remembered farmer: someone else on a shared phone
- * cannot erase the owner's memory.
+ * <p>Deletes nothing when the caller ID is withheld (nothing is stored), while the name check is unanswered, or when the
+ * speaker is not the remembered farmer: someone else on a shared phone cannot erase a named farmer's memory. Memory
+ * stored without a name is deleted for the caller on that number, because the number is the only owner it has
+ * ({@link MemoryGate.State#mayForget}).
  */
 @Component
 public class ForgetMeTool implements Tool {
@@ -74,10 +75,6 @@ public class ForgetMeTool implements Tool {
         if (state == MemoryGate.State.NAME_CHECK) {
             return ToolResult.error("Not deleted: first ask the farmer to answer whether they are the person named in "
                     + "the greeting.");
-        }
-        if (state == MemoryGate.State.UNNAMED) {
-            return ToolResult.error("Not deleted: there is no name to check that this caller owns what is stored for "
-                    + "this number, so it cannot be deleted on this call. Nothing from this call is saved.");
         }
         if (!state.mayForget()) {
             return ToolResult.error("Not deleted: this is not the remembered farmer, so their request cannot delete "

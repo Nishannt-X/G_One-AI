@@ -237,11 +237,43 @@ class AgentToolsTest {
         assertThat(tool.invoke(args("{}"), returning).content()).contains("first ask the farmer");
         gate.answerNameCheck(returning, false);
         assertThat(tool.invoke(args("{}"), returning).content()).contains("not the remembered farmer");
-        CallContext unnamed = ctx(KEY, unnamedMemory());
-        ToolResult u = tool.invoke(args("{}"), unnamed);
-        assertThat(u.ok()).isFalse();
-        assertThat(u.content()).contains("no name to check");
         assertThat(counting.writes).isZero();
+    }
+
+    @Test
+    void forgetMeDeletesAProfileThatHasNoName() {
+        // No name stored: the number is the only owner, so the caller on it may delete.
+        FarmerMemory unnamed = unnamedMemory();
+        store.upsertFacts(KEY, unnamed.facts());
+        CallContext unnamedCall = ctx(KEY, store.load(KEY).orElseThrow());
+        assertThat(gate.state(unnamedCall)).isEqualTo(MemoryGate.State.UNNAMED);
+        ToolResult u = forget().invoke(args("{}"), unnamedCall);
+        assertThat(u.ok()).isTrue();
+        assertThat(u.content()).startsWith("Deleted everything");
+        assertThat(store.load(KEY)).isEmpty();
+        assertThat(gate.state(unnamedCall)).isEqualTo(MemoryGate.State.FORGOTTEN);
+    }
+
+    @Test
+    void forgetMeDeletesANamedProfileOnlyAfterTheNameCheck() {
+        // A name stored and the check not passed (unanswered, no, or an unclear reply): refused, nothing deleted.
+        store.upsertFacts(KEY, suresh().facts());
+        CallContext unanswered = ctx(KEY, store.load(KEY).orElseThrow());
+        assertThat(forget().invoke(args("{}"), unanswered).ok()).isFalse();
+        CallContext unclear = ctx(KEY, store.load(KEY).orElseThrow());
+        gate.heardNameCheckReply(unclear, "yes I am his son");
+        gate.answerNameCheck(unclear, true);
+        assertThat(forget().invoke(args("{}"), unclear).ok()).isFalse();
+        assertThat(save().invoke(args("{\"field\":\"village\",\"value\":\"Pimpri\"}"), unclear).ok()).isFalse();
+        assertThat(store.load(KEY).orElseThrow().fact("name")).isPresent();
+        assertThat(store.load(KEY).orElseThrow().fact("village")).isEmpty();
+
+        // A name stored and the farmer says yes: deleted.
+        CallContext confirmed = ctx(KEY, store.load(KEY).orElseThrow());
+        gate.heardNameCheckReply(confirmed, "ji main Suresh hoon");
+        assertThat(gate.answerNameCheck(confirmed, true)).isEqualTo(MemoryGate.State.CONFIRMED);
+        assertThat(forget().invoke(args("{}"), confirmed).ok()).isTrue();
+        assertThat(store.load(KEY)).isEmpty();
     }
 
     // ---- confirm_name and end_call ----------------------------------------------------------------------------

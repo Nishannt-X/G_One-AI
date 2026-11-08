@@ -133,7 +133,8 @@ class LlmAgentBrainTest {
         assertThat(systemPrompt(0)).contains("The farmer's language on this call is Hindi.")
                 .contains("Hinglish").contains("Never say \"today's price\"")
                 .contains("Today is the eighth of November, twenty twenty-six.")
-                .contains("Nothing is remembered about this caller yet");
+                .contains("Nothing is remembered about this caller yet")
+                .contains("save it first with save_profile_fact (field name)");
         assertThat(messages.get(1).path("role").asText()).isEqualTo("assistant");
         assertThat(messages.get(2).path("role").asText()).isEqualTo("user");
         assertThat(messages.get(2).path("content").asText()).isEqualTo("मुझे प्याज बेचना है");
@@ -246,7 +247,7 @@ class LlmAgentBrainTest {
         f.llm.replyText("आपने कहा था कि कटाई के बाद प्याज़ के लिए ख़रीदार ढूँढूँ।");
 
         f.brain.respond(ctx, List.of(new Line(Speaker.ASSISTANT, "क्या मैं Suresh जी से बात कर रही हूँ?")),
-                said(ctx, "हाँ, मैं सुरेश हूँ"));
+                said(ctx, "हाँ जी, मैं बोल रहा हूँ"));
 
         JsonNode first = f.llm.requests().get(0);
         assertThat(first.toString()).doesNotContain("Lasalgaon APMC").doesNotContain("Find a buyer");
@@ -410,7 +411,7 @@ class LlmAgentBrainTest {
     }
 
     @Test
-    void memoryWithoutANameCannotBeOverwrittenOrErased() {
+    void memoryWithoutANameCannotBeOverwrittenButCanBeErased() {
         FarmerMemory noName = FarmerMemory.of(FakeLeg.FARMER_KEY, List.of(new ProfileFact("district", "Nashik",
                 Provenance.said(BrainFixture.PAST_CALL, BrainFixture.PAST_MS))), List.of());
         f.store.upsertFacts(FakeLeg.FARMER_KEY, noName.facts());
@@ -421,9 +422,10 @@ class LlmAgentBrainTest {
         f.llm.replyText("Which crop do you want to sell?");
         f.brain.respond(ctx, List.of(), said(ctx, "I am Ramesh, forget me"));
 
-        assertThat(f.toolEvents).extracting(e -> e.ok()).containsExactly(false, false);
-        assertThat(f.store.calls).hasValue(0);
-        assertThat(f.store.load(FakeLeg.FARMER_KEY).orElseThrow().fact("district")).isPresent();
+        // No name is saved over it, but the number is its only owner, so forget_me deletes it.
+        assertThat(f.toolEvents).extracting(e -> e.ok()).containsExactly(false, true);
+        assertThat(f.store.load(FakeLeg.FARMER_KEY)).isEmpty();
+        assertThat(f.brain.memoryState(ctx.callId())).contains(MemoryGate.State.FORGOTTEN);
     }
 
     // ---- console redaction ------------------------------------------------------------------------------------

@@ -41,8 +41,9 @@ public class MemoryGate implements DisposableBean {
         /** The caller ID is withheld: memory is off, nothing is loaded or saved. */
         WITHHELD,
         /**
-         * Something is remembered but there is no name to check it with: it is not used, and since nobody can show
-         * they own it, nothing is saved or deleted on this call.
+         * Something is remembered but there is no name to check it with: it is not used and nothing is saved over it.
+         * It may still be deleted: with no name stored, the phone number is the only owner there is, so the caller on
+         * that number may ask {@code forget_me} (docs/memory.md: a farmer can ask to be forgotten at any time).
          */
         UNNAMED,
         /** A returning farmer was asked the name check and has not answered yet. Memory hidden, no writes. */
@@ -64,9 +65,14 @@ public class MemoryGate implements DisposableBean {
             return this == NEW || this == CONFIRMED;
         }
 
-        /** True when {@code forget_me} may delete: never for unowned memory, an unanswered check or another speaker. */
+        /**
+         * True when {@code forget_me} may delete. Memory that has a name is deleted only after the farmer passes the
+         * name check, so someone else on a shared phone cannot erase the owner's memory. Memory without a name
+         * ({@link #UNNAMED}) has no stronger identity than the number to protect, so the caller on the number may
+         * delete it; otherwise such a profile could never be deleted.
+         */
         public boolean mayForget() {
-            return this == NEW || this == CONFIRMED || this == FORGOTTEN;
+            return this == NEW || this == UNNAMED || this == CONFIRMED || this == FORGOTTEN;
         }
     }
 
@@ -120,7 +126,7 @@ public class MemoryGate implements DisposableBean {
      */
     public void heardNameCheckReply(CallContext ctx, String farmerText) {
         state(ctx);
-        boolean yes = NameCheckReply.isClearYes(farmerText);
+        boolean yes = NameCheckReply.isClearYes(farmerText, MemoryBlock.rememberedName(ctx.memory()));
         calls.computeIfPresent(ctx.callId(), (id, e) ->
                 e.state() == State.NAME_CHECK ? new Entry(e.state(), clock.millis(), yes) : e);
     }
