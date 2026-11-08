@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.example.g_one.FakeUpstreams;
 import com.example.g_one.GOneProperties;
-import com.example.g_one.Language;
+import com.example.g_one.core.Language;
 import com.example.g_one.TestAudio;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;

@@ -1,5 +1,6 @@
-package com.example.g_one;
+package com.example.g_one.core;
 
+import com.example.g_one.GOneProperties;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
