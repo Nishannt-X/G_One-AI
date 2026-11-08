@@ -23,6 +23,12 @@ export default function Header({ status, theme, onToggleTheme }: { status: FeedS
           <span aria-hidden="true" className={`h-3 w-3 rounded-full ${s.dot}`} />
           {s.text}
         </p>
+        <a
+          href="#/simulator"
+          className="rounded-full border-2 border-slate-400 px-4 py-2 text-base font-semibold hover:bg-slate-100 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:border-slate-500 dark:hover:bg-slate-800"
+        >
+          Call simulator
+        </a>
         <button
           type="button"
           onClick={onToggleTheme}
