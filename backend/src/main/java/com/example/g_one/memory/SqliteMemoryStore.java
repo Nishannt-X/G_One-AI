@@ -97,12 +97,19 @@ public final class SqliteMemoryStore implements MemoryStore, AutoCloseable {
     private final ObjectMapper json = new ObjectMapper();
 
     static final String GITIGNORE = "# Farmer memory database (synthetic in this repo, but never committed).\n*\n";
+    /** The database file and the files SQLite keeps beside it. */
+    static final List<String> DB_FILES =
+            List.of(FILE_NAME, FILE_NAME + "-wal", FILE_NAME + "-shm", FILE_NAME + "-journal");
+    static final String GITIGNORE_TRAILER = "# Farmer memory database: never committed (keep these lines last).\n"
+            + String.join("\n", DB_FILES) + "\n";
 
     /**
      * Opens (or creates) {@code <dataDir>/g-one.db} and its schema. The data directory always ends up with a
-     * {@code .gitignore} of {@code *} (written when missing, also for a directory that already existed), so the
-     * database and its {@code -wal}/{@code -shm} files are never committed by accident. The root {@code .gitignore}
-     * also ignores the default {@code backend/data/}.
+     * {@code .gitignore} that ignores the database and its {@code -wal}/{@code -shm}/{@code -journal} files, so they
+     * are never committed by accident: a missing file is written as {@code *}; an existing file whose last rules do
+     * not already ignore them (no {@code *} or explicit database lines after its last {@code !} negation, since in git
+     * the last matching rule wins) gets the explicit lines appended at the end, keeping its own lines. The root
+     * {@code .gitignore} also ignores the default {@code backend/data/}.
      */
     public static SqliteMemoryStore open(Path dataDir) {
         Objects.requireNonNull(dataDir, "dataDir");
@@ -111,9 +118,13 @@ public final class SqliteMemoryStore implements MemoryStore, AutoCloseable {
             Path ignore = dataDir.resolve(".gitignore");
             if (!Files.exists(ignore)) {
                 Files.writeString(ignore, GITIGNORE, StandardCharsets.UTF_8);
-            } else if (!ignoresEverything(Files.readString(ignore, StandardCharsets.UTF_8))) {
-                // Keep what is there; just add the catch-all line.
-                Files.writeString(ignore, "\n" + GITIGNORE, StandardCharsets.UTF_8, StandardOpenOption.APPEND);
+            } else {
+                String existing = Files.readString(ignore, StandardCharsets.UTF_8);
+                if (!ignoresDatabaseLast(existing)) {
+                    String gap = existing.isEmpty() || existing.endsWith("\n") ? "" : "\n";
+                    Files.writeString(ignore, gap + GITIGNORE_TRAILER, StandardCharsets.UTF_8,
+                            StandardOpenOption.APPEND);
+                }
             }
         } catch (IOException e) {
             throw new UncheckedIOException("Could not create the memory data directory", e);
@@ -121,9 +132,25 @@ public final class SqliteMemoryStore implements MemoryStore, AutoCloseable {
         return new SqliteMemoryStore(dataDir.resolve(FILE_NAME));
     }
 
-    /** True when a line of the ignore file is exactly {@code *}. */
-    private static boolean ignoresEverything(String gitignore) {
-        return gitignore.lines().map(String::strip).anyMatch("*"::equals);
+    /**
+     * True when, after the file's last negation ({@code !...}) rule, a {@code *} line or an explicit line for every
+     * database file follows, so git's last-match-wins rule leaves every database file ignored.
+     */
+    static boolean ignoresDatabaseLast(String gitignore) {
+        List<String> rules = gitignore.lines()
+                .map(String::strip)
+                .filter(l -> !l.isEmpty() && !l.startsWith("#"))
+                .toList();
+        int lastNegation = -1;
+        for (int i = 0; i < rules.size(); i++) {
+            if (rules.get(i).startsWith("!")) {
+                lastNegation = i;
+            }
+        }
+        List<String> after = rules.subList(lastNegation + 1, rules.size()).stream()
+                .map(l -> l.startsWith("/") ? l.substring(1) : l)
+                .toList();
+        return after.contains("*") || after.containsAll(DB_FILES);
     }
 
     private SqliteMemoryStore(Path file) {

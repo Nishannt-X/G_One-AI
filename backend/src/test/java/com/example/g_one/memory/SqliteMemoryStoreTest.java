@@ -11,12 +11,17 @@ import com.example.g_one.core.Provenance;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /** SQLite against the shared contract, plus what only a file store has: restart persistence and the bytes on disk. */
 class SqliteMemoryStoreTest extends MemoryStoreContract {
@@ -122,17 +127,80 @@ class SqliteMemoryStoreTest extends MemoryStoreContract {
     }
 
     @Test
-    void anExistingGitignoreWithoutTheCatchAllKeepsItsLinesAndGainsIt() throws Exception {
+    void anExistingGitignoreWithoutTheCatchAllKeepsItsLinesAndGainsTheDatabaseLines() throws Exception {
         Path dir = Files.createDirectories(tmp.resolve("partial"));
-        Files.writeString(dir.resolve(".gitignore"), "notes.txt\n");
+        Files.writeString(dir.resolve(".gitignore"), "notes.txt");
         try (SqliteMemoryStore s = SqliteMemoryStore.open(dir)) {
             assertThat(s.load(SURESH)).isEmpty();
         }
         String once = Files.readString(dir.resolve(".gitignore"));
-        assertThat(once.lines()).contains("notes.txt", "*");
+        assertThat(once.lines()).startsWith("notes.txt")
+                .contains("g-one.db", "g-one.db-wal", "g-one.db-shm", "g-one.db-journal");
 
         SqliteMemoryStore.open(dir).close();
         assertThat(Files.readString(dir.resolve(".gitignore"))).as("added only once").isEqualTo(once);
+    }
+
+    @Test
+    void aNegationAfterTheCatchAllIsOverriddenByTrailingDatabaseLines() throws Exception {
+        Path dir = Files.createDirectories(tmp.resolve("negated"));
+        Files.writeString(dir.resolve(".gitignore"), "*\n!g-one.db\n!*-wal\n");
+        try (SqliteMemoryStore s = SqliteMemoryStore.open(dir)) {
+            assertThat(s.load(SURESH)).isEmpty();
+        }
+        List<String> lines = Files.readString(dir.resolve(".gitignore")).lines().toList();
+
+        assertThat(lines).startsWith("*", "!g-one.db", "!*-wal");
+        assertThat(lines.subList(lines.size() - 4, lines.size()))
+                .as("last match wins, so the database lines come after every negation")
+                .containsExactly("g-one.db", "g-one.db-wal", "g-one.db-shm", "g-one.db-journal");
+        assertThat(SqliteMemoryStore.ignoresDatabaseLast(String.join("\n", lines))).isTrue();
+
+        String once = Files.readString(dir.resolve(".gitignore"));
+        SqliteMemoryStore.open(dir).close();
+        assertThat(Files.readString(dir.resolve(".gitignore"))).as("added only once").isEqualTo(once);
+    }
+
+    @ParameterizedTest(name = "[{index}] {0} -> {1}")
+    @CsvSource(delimiter = '|', value = {
+        "'*'                                                   | true",
+        "'# data\\n*\\n'                                             | true",
+        "'/*'                                                        | true",
+        "'g-one.db\\ng-one.db-wal\\ng-one.db-shm\\ng-one.db-journal' | true",
+        "'*\\n!g-one.db'                                             | false",
+        "'*\\n!keep.txt\\nnotes.txt'                                 | false",
+        "'!keep.txt\\n*'                                             | true",
+        "'g-one.db'                                                  | false",
+        "''                                                          | false",
+    })
+    void theLastRulesMustIgnoreEveryDatabaseFile(String gitignore, boolean ignored) {
+        assertThat(SqliteMemoryStore.ignoresDatabaseLast(gitignore.replace("\\n", "\n"))).isEqualTo(ignored);
+    }
+
+    @Test
+    void theRealGitAgreesThatTheDatabaseIsIgnored() throws Exception {
+        Path repo = Files.createDirectories(tmp.resolve("repo"));
+        Assumptions.assumeTrue(git(repo, "init", "-q") == 0, "git is not on the PATH");
+        Path dir = Files.createDirectories(repo.resolve("data"));
+        Files.writeString(dir.resolve(".gitignore"), "*\n!g-one.db\n!g-one.db-wal\n!.gitignore\n");
+        SqliteMemoryStore.open(dir).close();
+
+        for (String f : List.of("g-one.db", "g-one.db-wal", "g-one.db-shm")) {
+            Files.write(dir.resolve(f), new byte[0], StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            assertThat(git(repo, "check-ignore", "-q", "data/" + f)).as(f + " ignored").isZero();
+        }
+    }
+
+    private static int git(Path dir, String... args) throws Exception {
+        List<String> cmd = new ArrayList<>(List.of("git", "-C", dir.toString()));
+        cmd.addAll(List.of(args));
+        try {
+            Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+            p.getInputStream().readAllBytes();
+            return p.waitFor();
+        } catch (java.io.IOException e) {
+            return -1;
+        }
     }
 
     @Test
