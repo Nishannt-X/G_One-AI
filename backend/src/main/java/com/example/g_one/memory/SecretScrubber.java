@@ -17,23 +17,27 @@ import java.util.regex.Pattern;
  *       No price, unit or date context saves it.</li>
  *   <li><b>Phone numbers split in two.</b> Ten digits as {@code 98765, 43210} (separator up to three of space, comma,
  *       dot or hyphen), optionally after {@code +91} or {@code 0}.</li>
- *   <li><b>Grouped identifiers.</b> Digit groups joined by single spaces, hyphens, commas or dots that hold 10+ digits
- *       in total (phone, card, Aadhaar and account numbers, however they are grouped, with an optional {@code +}).</li>
- *   <li><b>Long runs.</b> Any other run of 6+ digits (groups joined by single spaces or hyphens count as one run, so
- *       {@code 4829 13} is six digits) is removed unless it is
+ *   <li><b>Numbers of 6+ digits.</b> Every number token is taken whole: digit groups joined by single spaces, commas,
+ *       dots, hyphens or slashes, with an optional leading {@code +} ({@code 123456,78}, {@code 4829 13},
+ *       {@code 1234.5678.9012} and {@code 98/76/54} are one token each). A token with 6+ digits in total is removed
+ *       unless that exact token is
  *       <ul>
- *         <li>a price of 6 to 9 digits: right after {@code Rs}, {@code ₹}, {@code INR} or {@code rupees}, or right
- *             before {@code rupees}, {@code Rs}, {@code /-} or {@code per ...};</li>
- *         <li>a quantity of 6 to 9 digits: right before a unit ({@code quintal}, {@code kg}, {@code tonne},
- *             {@code bags}, ...); or</li>
- *         <li>a date: {@code yyyy-MM-dd}, {@code dd-MM-yyyy}, {@code yyyyMMdd} or {@code ddMMyyyy} (spaces work as
- *             separators too) that is a real date between 2000 and 2100.</li>
+ *         <li>an amount of 6 to 9 digits written the way amounts are written (plain digits, Indian or Western comma
+ *             grouping such as {@code 1,23,456} or {@code 123,456}, an optional {@code .5} or {@code .75}, or a
+ *             range of two such amounts joined by {@code -} or {@code /}) <i>and</i> right after a price word
+ *             ({@code Rs}, {@code ₹}, {@code INR}, {@code rupees}, {@code price}, {@code rate}, {@code bhav},
+ *             {@code daam}, {@code भाव}, ...) or right before {@code rupees}, {@code Rs}, {@code /-}, {@code per ...}
+ *             or a unit ({@code quintal}, {@code kg}, {@code tonne}, {@code bags}, {@code क्विंटल}, ...); or</li>
+ *         <li>a date: {@code yyyy-MM-dd}, {@code dd-MM-yyyy} (separator {@code -}, {@code /}, {@code .} or a space,
+ *             the same one twice), {@code yyyyMMdd} or {@code ddMMyyyy}, that is a real date between 2000 and
+ *             2100.</li>
  *       </ul>
- *       Ten or more digits are never a price or quantity a farmer means (that is over ₹99 crore), so a phone, card or
- *       Aadhaar number next to {@code Rs} or {@code kg} is still removed.</li>
+ *       So {@code 123456,78}, {@code 12345.75} with no price word, and grouped card, Aadhaar, phone or account
+ *       numbers are always removed. Ten or more digits are never an amount a farmer means (that is over ₹99 crore),
+ *       so a phone, card or Aadhaar number next to {@code Rs} or {@code kg} is removed too.</li>
  * </ol>
- * Amounts written with Indian commas ({@code 1,20,000}) and decimals ({@code 12345.75}) stay, as long as they are
- * under ten digits and not after a sensitive label.
+ * Short numbers (under six digits, such as {@code 2,450} or {@code 10.30}) stay unless a sensitive label is next to
+ * them.
  */
 public final class SecretScrubber {
     public static final String REMOVED = "[number removed]";
@@ -56,6 +60,8 @@ public final class SecretScrubber {
             + "|नंबर|नम्बर|है|का|की|के|को|मेरा|मेरी|कोड|वाला|आपका|अपना)" + WORD_END + ")*[\\s:=#\\-]*";
     /** Digit groups joined by single spaces, hyphens, commas or dots, with an optional leading {@code +}. */
     private static final String GROUPED = "\\+?\\d+(?:[ ,.\\-]\\d+)*";
+    /** A whole number token for the 6+ digit rule: like {@link #GROUPED}, and slashes join groups too. */
+    private static final String TOKEN = "\\+?\\d+(?:[ ,./\\-]\\d+)*";
     private static final int FLAGS = Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
 
     private static final Pattern AFTER_LABEL = Pattern.compile(
@@ -65,22 +71,26 @@ public final class SecretScrubber {
             "(?<![\\d.,+])(" + GROUPED + ")(?!\\d)(" + FILLER + SECRET_LABELS + WORD_END + ")", FLAGS);
     private static final Pattern SPLIT_PHONE = Pattern.compile(
             "(?<![\\d+])(?:(?:\\+?91|0)[ \\-]{0,2})?[6-9]\\d{4}[ ,.\\-]{1,3}\\d{5}(?!\\d)");
-    private static final Pattern LONG_GROUPED = Pattern.compile("(?<![\\d+])" + GROUPED + "(?!\\d)");
+    private static final Pattern NUMBER = Pattern.compile("(?<![\\d+])" + TOKEN + "(?!\\d)");
 
-    /** Digit groups joined by at most one space or hyphen, not part of a comma-grouped or decimal number. */
-    private static final Pattern RUN = Pattern.compile("(?<![\\d.,])\\d+(?:[ \\-]\\d+)*(?!\\d|[.,]\\d)");
-    private static final Pattern PRICE_BEFORE = Pattern.compile("(?:₹|\\brs\\.?|\\binr|\\brupees?)\\s*$", FLAGS);
+    /** One amount: plain digits, Western (123,456) or Indian (1,23,456) comma grouping, optional paise. */
+    private static final String ONE_AMOUNT = "(?:\\d{1,3}(?:,\\d{3})+|\\d{1,2}(?:,\\d{2})*,\\d{3}|\\d+)(?:\\.\\d{1,2})?";
+    private static final Pattern AMOUNT = Pattern.compile(ONE_AMOUNT + "(?:[-/]" + ONE_AMOUNT + ")?");
+    private static final Pattern PRICE_BEFORE = Pattern.compile(
+            "(?:₹|\\brs\\.?|\\binr|\\brupees?|\\brupaye|\\bprice|\\brate|\\bbhaa?v|\\bdaam|\\bk[ei]e?mat"
+                    + "|रु\\.?|रुपये|रुपए|भाव|दाम|कीमत)"
+                    + "(?:\\s*(?:is|hai|of|:|=|है)" + WORD_END + ")?\\s*$", FLAGS);
     private static final Pattern UNIT_AFTER = Pattern.compile(
-            "^\\s*(?:/-|/\\s*(?:quintal|qtl|kg)|(?:rupees?|rs|inr|per|quintals?|qtls?|kgs?|kilos?|kilograms?"
-                    + "|tonnes?|tons?|bags?|boxes|crates?|acres?)\\b)", FLAGS);
-    private static final Pattern YEAR_FIRST = Pattern.compile("(\\d{4})-(\\d{2})-(\\d{2})");
-    private static final Pattern DAY_FIRST = Pattern.compile("(\\d{2})-(\\d{2})-(\\d{4})");
+            "^\\s*(?:/-|/\\s*(?:quintal|qtl|kg)|(?:rupees?|rupaye|rupaiye|rs|inr|per|quintals?|qtls?|kgs?|kilos?"
+                    + "|kilograms?|tonnes?|tons?|bags?|boxes|crates?|acres?|रुपये|रुपए|रु|क्विंटल|किलो|टन|बोरी|बोरे)"
+                    + WORD_END + ")", FLAGS);
+    private static final Pattern YEAR_FIRST = Pattern.compile("(\\d{4})([-/. ])(\\d{1,2})\\2(\\d{1,2})");
+    private static final Pattern DAY_FIRST = Pattern.compile("(\\d{1,2})([-/. ])(\\d{1,2})\\2(\\d{4})");
     private static final Pattern EIGHT = Pattern.compile("\\d{8}");
 
     static final int MIN_LABELLED_DIGITS = 3;
     static final int MIN_RUN_DIGITS = 6;
     static final int MAX_AMOUNT_DIGITS = 9;
-    static final int MIN_ID_DIGITS = 10;
 
     private SecretScrubber() {}
 
@@ -91,8 +101,7 @@ public final class SecretScrubber {
         String out = afterLabels(text);
         out = beforeLabels(out);
         out = SPLIT_PHONE.matcher(out).replaceAll(Matcher.quoteReplacement(REMOVED));
-        out = longGrouped(out);
-        return longRuns(out);
+        return numbers(out);
     }
 
     /** True when {@link #scrub} would change the text. */
@@ -122,30 +131,32 @@ public final class SecretScrubber {
         return out.toString();
     }
 
-    private static String longGrouped(String text) {
-        Matcher m = LONG_GROUPED.matcher(text);
+    /** Step 3: every number token of 6+ digits goes unless that exact token is an amount in context or a date. */
+    private static String numbers(String text) {
+        Matcher m = NUMBER.matcher(text);
         StringBuilder out = new StringBuilder(text.length());
         while (m.find()) {
-            m.appendReplacement(out, Matcher.quoteReplacement(digits(m.group()) >= MIN_ID_DIGITS ? REMOVED : m.group()));
+            String token = m.group();
+            m.appendReplacement(out, Matcher.quoteReplacement(keep(text, token, m.start(), m.end()) ? token : REMOVED));
         }
         m.appendTail(out);
         return out.toString();
     }
 
-    private static String longRuns(String text) {
-        Matcher m = RUN.matcher(text);
-        StringBuilder out = new StringBuilder(text.length());
-        while (m.find()) {
-            String run = m.group();
-            int digits = digits(run);
-            boolean amount = digits <= MAX_AMOUNT_DIGITS
-                    && (PRICE_BEFORE.matcher(text.substring(0, m.start())).find()
-                            || UNIT_AFTER.matcher(text.substring(m.end())).find());
-            boolean keep = digits < MIN_RUN_DIGITS || isDate(run.replace(' ', '-')) || amount;
-            m.appendReplacement(out, Matcher.quoteReplacement(keep ? run : REMOVED));
+    private static boolean keep(String text, String token, int start, int end) {
+        int digits = digits(token);
+        if (digits < MIN_RUN_DIGITS) {
+            return true;
         }
-        m.appendTail(out);
-        return out.toString();
+        if (digits > MAX_AMOUNT_DIGITS) {
+            return false;
+        }
+        if (isDate(token)) {
+            return true;
+        }
+        return AMOUNT.matcher(token).matches()
+                && (PRICE_BEFORE.matcher(text.substring(0, start)).find()
+                        || UNIT_AFTER.matcher(text.substring(end)).find());
     }
 
     private static int digits(String s) {
@@ -161,10 +172,10 @@ public final class SecretScrubber {
     private static boolean isDate(String run) {
         Matcher m;
         if ((m = YEAR_FIRST.matcher(run)).matches()) {
-            return validDate(m.group(1), m.group(2), m.group(3));
+            return validDate(m.group(1), m.group(3), m.group(4));
         }
         if ((m = DAY_FIRST.matcher(run)).matches()) {
-            return validDate(m.group(3), m.group(2), m.group(1));
+            return validDate(m.group(4), m.group(3), m.group(1));
         }
         if (EIGHT.matcher(run).matches()) {
             return validDate(run.substring(0, 4), run.substring(4, 6), run.substring(6, 8))
