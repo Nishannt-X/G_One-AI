@@ -15,10 +15,15 @@ import java.util.regex.Pattern;
  *       with at most a few connector words between ({@code is}, {@code hai}, {@code number}, {@code मेरा}, ...), is
  *       removed. So is a 3+ digit number right before an OTP, PIN, password or CVV label ({@code 4829 mera OTP hai}).
  *       No price, unit or date context saves it.</li>
- *   <li><b>Phone numbers split in two.</b> Ten digits as {@code 98765, 43210} (separator up to three of space, comma,
- *       dot or hyphen), optionally after {@code +91} or {@code 0}.</li>
- *   <li><b>Numbers of 6+ digits.</b> Every number token is taken whole: digit groups joined by single spaces, commas,
- *       dots, hyphens or slashes, with an optional leading {@code +} ({@code 123456,78}, {@code 4829 13},
+ *   <li><b>Account labels.</b> A number of 6+ digits right after an account, bank, IFSC or UPI label
+ *       ({@code account}, {@code a/c}, {@code acct}, {@code khata}, {@code khaata}, {@code खाता}, {@code bank},
+ *       {@code IFSC}, {@code UPI}, ...), with the same connector words between, is removed. This runs before the
+ *       date and amount exemptions, so {@code account number 20261108} is removed although it reads as a date.</li>
+ *   <li><b>Phone numbers.</b> Ten digits starting with 6 to 9 in any grouping ({@code 98765    43210},
+ *       {@code 9876 5 43210}, {@code 98765 , 43210}), optionally after {@code +91}, {@code 91} or {@code 0}. Groups
+ *       may be joined by any run of whitespace, or by one comma, dot or hyphen with optional whitespace around it.</li>
+ *   <li><b>Numbers of 6+ digits.</b> Every number token is taken whole: digit groups joined by any run of whitespace
+ *       or by one comma, dot, hyphen or slash, with an optional leading {@code +} ({@code 123456,78}, {@code 4829 13},
  *       {@code 1234.5678.9012} and {@code 98/76/54} are one token each). A token with 6+ digits in total is removed
  *       unless that exact token is
  *       <ul>
@@ -58,10 +63,17 @@ public final class SecretScrubber {
     private static final String FILLER = "(?:[\\s:=#\\-]*(?:is|was|hai|he|h|ka|ki|ke|ko|number|nambar|numbar|no\\.?"
             + "|num|code|wala|vala|digit|digits|mera|meri|my|your|tera|aapka|apka|apna|the"
             + "|नंबर|नम्बर|है|का|की|के|को|मेरा|मेरी|कोड|वाला|आपका|अपना)" + WORD_END + ")*[\\s:=#\\-]*";
-    /** Digit groups joined by single spaces, hyphens, commas or dots, with an optional leading {@code +}. */
-    private static final String GROUPED = "\\+?\\d+(?:[ ,.\\-]\\d+)*";
+    /** Account, bank and payment labels: a 6+ digit number after them is removed before any exemption. */
+    private static final String ACCOUNT_LABELS = "(?:account|acount|acct|acc|a/c|bank|khaa?t[ae]|ifsc"
+            + "|upi(?:[ \\-]?id)?|vpa|खाता|खाते|बैंक|अकाउंट|आईएफएससी|यूपीआई)";
+    /** Any run of whitespace, including no-break and other Unicode spaces. */
+    private static final String WS = "[\\s\\p{Z}]+";
+    /** Digit groups joined by any whitespace run or one hyphen, comma or dot, with an optional leading {@code +}. */
+    private static final String GROUPED = "\\+?\\d+(?:(?:[,.\\-]|" + WS + ")\\d+)*";
     /** A whole number token for the 6+ digit rule: like {@link #GROUPED}, and slashes join groups too. */
-    private static final String TOKEN = "\\+?\\d+(?:[ ,./\\-]\\d+)*";
+    private static final String TOKEN = "\\+?\\d+(?:(?:[,./\\-]|" + WS + ")\\d+)*";
+    /** Between phone digits: a whitespace run, or one comma, dot or hyphen with optional whitespace around it. */
+    private static final String PHONE_SEP = "(?:[\\s\\p{Z}]*[,.\\-][\\s\\p{Z}]*|" + WS + ")";
     private static final int FLAGS = Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
 
     private static final Pattern AFTER_LABEL = Pattern.compile(
@@ -69,8 +81,11 @@ public final class SecretScrubber {
                     + "(" + GROUPED + ")(?!\\d)", FLAGS);
     private static final Pattern BEFORE_LABEL = Pattern.compile(
             "(?<![\\d.,+])(" + GROUPED + ")(?!\\d)(" + FILLER + SECRET_LABELS + WORD_END + ")", FLAGS);
-    private static final Pattern SPLIT_PHONE = Pattern.compile(
-            "(?<![\\d+])(?:(?:\\+?91|0)[ \\-]{0,2})?[6-9]\\d{4}[ ,.\\-]{1,3}\\d{5}(?!\\d)");
+    private static final Pattern AFTER_ACCOUNT_LABEL = Pattern.compile(
+            WORD_START + "(" + ACCOUNT_LABELS + WORD_END + FILLER + ")(" + GROUPED + ")(?!\\d)", FLAGS);
+    private static final Pattern PHONE = Pattern.compile(
+            "(?<![\\d+])(?:(?:\\+[\\s\\p{Z}]*)?91" + PHONE_SEP + "?|0" + PHONE_SEP + "?)?"
+                    + "[6-9](?:" + PHONE_SEP + "?\\d){9}(?!" + PHONE_SEP + "?\\d)");
     private static final Pattern NUMBER = Pattern.compile("(?<![\\d+])" + TOKEN + "(?!\\d)");
 
     /** One amount: plain digits, Western (123,456) or Indian (1,23,456) comma grouping, optional paise. */
@@ -100,7 +115,8 @@ public final class SecretScrubber {
         }
         String out = afterLabels(text);
         out = beforeLabels(out);
-        out = SPLIT_PHONE.matcher(out).replaceAll(Matcher.quoteReplacement(REMOVED));
+        out = afterAccountLabels(out);
+        out = PHONE.matcher(out).replaceAll(Matcher.quoteReplacement(REMOVED));
         return numbers(out);
     }
 
@@ -114,6 +130,17 @@ public final class SecretScrubber {
         StringBuilder out = new StringBuilder(text.length());
         while (m.find()) {
             String number = digits(m.group(2)) >= MIN_LABELLED_DIGITS ? REMOVED : m.group(2);
+            m.appendReplacement(out, Matcher.quoteReplacement(m.group(1) + number));
+        }
+        m.appendTail(out);
+        return out.toString();
+    }
+
+    private static String afterAccountLabels(String text) {
+        Matcher m = AFTER_ACCOUNT_LABEL.matcher(text);
+        StringBuilder out = new StringBuilder(text.length());
+        while (m.find()) {
+            String number = digits(m.group(2)) >= MIN_RUN_DIGITS ? REMOVED : m.group(2);
             m.appendReplacement(out, Matcher.quoteReplacement(m.group(1) + number));
         }
         m.appendTail(out);
