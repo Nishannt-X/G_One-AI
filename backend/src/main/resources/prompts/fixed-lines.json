@@ -1,0 +1,21 @@
+{
+  "_comment": "Fixed lines the assistant speaks without the language model, from docs/call-flow.md and docs/memory.md (variant B, dial-in). Keyed by Gnani locale code; a code with no entry uses the entry with the same language prefix, then en-IN. {name} is the name the farmer gave on an earlier call. The assistant voice is female, so Hindi lines use feminine verb forms. No digits: Timbre reads numbers better as words.",
+  "lines": {
+    "hi-IN": {
+      "welcome": "नमस्ते, जी-वन में आपका स्वागत है। मैं एक AI सहायक हूँ। हिंदी या अंग्रेज़ी, जो आसान हो, उसमें बोलिए।",
+      "memoryNotice": "बेहतर मदद के लिए मैं इस बातचीत का छोटा सा नोट रखूँगी। न चाहें तो कभी भी \"मुझे भूल जाओ\" कहिए।",
+      "withheld": "आपका नंबर नहीं दिख रहा, इसलिए यह बातचीत याद नहीं रख पाऊँगी।",
+      "nameCheck": "नमस्ते, जी-वन बोल रही हूँ। क्या मैं {name} जी से बात कर रही हूँ?",
+      "forgotten": "ठीक है, मैंने आपकी जानकारी मिटा दी है।",
+      "goodbye": "धन्यवाद। नमस्ते।"
+    },
+    "en-IN": {
+      "welcome": "Welcome to G-One. I'm an AI assistant. Speak Hindi or English, whichever is easier.",
+      "memoryNotice": "To help you better, I'll keep a short note of this call. Say \"forget me\" any time if you don't want that.",
+      "withheld": "I can't see your number, so I won't remember this call.",
+      "nameCheck": "Hello, this is G-One. Am I speaking with {name} ji?",
+      "forgotten": "Done, I've deleted what I had about you.",
+      "goodbye": "Thank you. Goodbye."
+    }
+  }
+}
