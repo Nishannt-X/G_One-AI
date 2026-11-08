@@ -42,3 +42,17 @@ g-one:
     api-key: ${G_ONE_LLM_API_KEY:}
     model: ${G_ONE_LLM_MODEL:}
     timeout-seconds: ${G_ONE_LLM_TIMEOUT_SECONDS:30}
+  # Farmer memory (docs/memory.md, ADR 0004). Stored under CallerKey (HMAC of the number) only, never a raw number.
+  memory:
+    # sqlite (default, file under data-dir) or in-memory (lost on restart; for tests).
+    store: ${G_ONE_MEMORY_STORE:sqlite}
+    # Holds g-one.db. Created on startup with a .gitignore so the database is never committed.
+    data-dir: ${G_ONE_DATA_DIR:./data}
+    # Base64 of at least 32 random bytes. Needed to key the seed farmer; never commit it.
+    hmac-key: ${G_ONE_MEMORY_HMAC_KEY:}
+    # Optional synthetic seed: a file path, or classpath:memory/seed-suresh.json for the bundled demo farmer.
+    seed-file: ${G_ONE_MEMORY_SEED_FILE:}
+    # Required as the X-Access-Code header on /api/memory/**. Blank = the endpoint is closed (403) unless dev-open.
+    access-code: ${G_ONE_ACCESS_CODE:}
+    # Local dev only: with no access code, serve /api/memory/** to direct loopback requests (never via a tunnel).
+    dev-open: ${G_ONE_MEMORY_DEV_OPEN:false}

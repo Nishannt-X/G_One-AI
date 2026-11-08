@@ -1,0 +1,106 @@
+{
+  "_comment": "Synthetic demo farmer from docs/memory.md. No phone number here: phoneEnvKey names the env var that holds it.",
+  "phoneEnvKey": "G_ONE_DEMO_FARMER_PHONE",
+  "profile": {
+    "name": {
+      "value": "Suresh",
+      "source": "said",
+      "callId": "c-1028",
+      "at": "2026-10-28T10:12:00+05:30"
+    },
+    "village": {
+      "value": "near Lasalgaon",
+      "source": "said",
+      "callId": "c-1103",
+      "at": "2026-11-03T09:40:00+05:30"
+    },
+    "district": {
+      "value": "Nashik",
+      "source": "said",
+      "callId": "c-1103",
+      "at": "2026-11-03T09:40:00+05:30"
+    },
+    "state": {
+      "value": "Maharashtra",
+      "source": "inferred",
+      "callId": "c-1103",
+      "at": "2026-11-03T09:40:00+05:30"
+    },
+    "crops": [
+      {
+        "value": "tomato",
+        "source": "said",
+        "callId": "c-1028",
+        "at": "2026-10-28T10:12:00+05:30"
+      },
+      {
+        "value": "red onion",
+        "source": "said",
+        "callId": "c-1103",
+        "at": "2026-11-03T09:40:00+05:30"
+      }
+    ],
+    "usualMandi": {
+      "value": "Lasalgaon APMC",
+      "source": "said",
+      "callId": "c-1103",
+      "at": "2026-11-03T09:40:00+05:30"
+    },
+    "language": {
+      "value": "HI_EN",
+      "source": "inferred",
+      "callId": "c-1028",
+      "at": "2026-10-28T10:12:00+05:30"
+    },
+    "noticeGivenAt": "2026-10-28T10:10:30+05:30",
+    "createdAt": "2026-10-28T10:10:00+05:30",
+    "updatedAt": "2026-11-03T09:52:00+05:30"
+  },
+  "gists": [
+    {
+      "callId": "c-1028",
+      "startedAt": "2026-10-28T10:10:00+05:30",
+      "endedAt": "2026-10-28T10:19:00+05:30",
+      "direction": "CALLBACK",
+      "language": "HI_EN",
+      "gist": "Suresh wanted to sell tomato. Heard the dated AGMARKNET reference for Lasalgaon. Connected to Shinde Traders; after a price whisper he asked for more and agreed 6 quintal at Rs 1,200 per quintal, pickup at farm.",
+      "followUps": [],
+      "outcome": "DEAL_CONFIRMED",
+      "dealId": "d-1028-1"
+    },
+    {
+      "callId": "c-1103",
+      "startedAt": "2026-11-03T09:40:00+05:30",
+      "endedAt": "2026-11-03T09:52:00+05:30",
+      "direction": "CALLBACK",
+      "language": "HI_EN",
+      "gist": "Suresh asked the red onion price at Lasalgaon and heard the dated AGMARKNET reference. Harvest expected around Nov 8, roughly 20 quintal. He did not want a buyer yet.",
+      "followUps": [
+        {
+          "text": "Find a buyer for ~20 quintal red onion after harvest",
+          "dueHint": "2026-11-08",
+          "status": "OPEN"
+        }
+      ],
+      "outcome": "INFO_ONLY",
+      "dealId": null
+    }
+  ],
+  "deals": [
+    {
+      "dealId": "d-1028-1",
+      "callId": "c-1028",
+      "buyerId": "shinde-traders",
+      "crop": "tomato",
+      "quantity": 6,
+      "unit": "quintal",
+      "pricePerUnitInr": 1200,
+      "pickup": "at farm",
+      "farmerYes": true,
+      "buyerYes": true,
+      "status": "AGREED",
+      "reference": null,
+      "at": "2026-10-28T10:18:00+05:30"
+    }
+  ]
+}

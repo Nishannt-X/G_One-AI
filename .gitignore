@@ -25,3 +25,6 @@ web/dist/
 
 # Old project code, untracked since be28f01; kept on local disks as reference only (see dump/LEGACY-NOTES.md)
 /src/
+
+# Farmer memory database (default G_ONE_DATA_DIR ./data, run from backend/), with its -wal/-shm files
+backend/data/
