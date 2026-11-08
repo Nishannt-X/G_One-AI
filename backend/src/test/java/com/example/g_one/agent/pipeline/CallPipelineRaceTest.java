@@ -4,6 +4,7 @@ import static com.example.g_one.agent.pipeline.ScriptedBrain.GREETING;
 import static com.example.g_one.agent.pipeline.ScriptedBrain.replyTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.example.g_one.agent.AgentBrain;
 import com.example.g_one.agent.AgentBrain.Line;
 import com.example.g_one.agent.AgentBrain.Speaker;
 import com.example.g_one.agent.pipeline.CallEndHandler.EndedCall;
@@ -67,8 +68,12 @@ class CallPipelineRaceTest {
     }
 
     private LegRegistry pipeline(MemoryStore memory, SpeechToText hearing, TextToSpeech speech) {
+        return pipeline(brain, memory, hearing, speech);
+    }
+
+    private LegRegistry pipeline(AgentBrain thinker, MemoryStore memory, SpeechToText hearing, TextToSpeech speech) {
         LegRegistry r = new LegRegistry();
-        new CallPipeline(brain, hearing, speech, memory, bus, List.of(endedCalls::add), executor, clock::get, GRACE,
+        new CallPipeline(thinker, hearing, speech, memory, bus, List.of(endedCalls::add), executor, clock::get, GRACE,
                 HOLD, CallPipeline.DEFAULT_FIXED_GOODBYES, delays).attach(r);
         return r;
     }
@@ -458,6 +463,49 @@ class CallPipelineRaceTest {
         assertThat(brain.greets).isEmpty();
         assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).isEmpty();
         assertThat(events).last().isInstanceOf(ConsoleEvent.CallEnded.class);
+    }
+
+    // ---- round 3: at most one brain call per leg, so a superseded call cannot touch the newer call's state ----
+
+    @Test
+    void aTurnHeardWhileTheBrainAnswersWaitsSoTheOlderCallCannotUndoTheNameCheck() {
+        store.saveGist(FakeLeg.FARMER_KEY, new CallGist(CallId.of("c-0901"), 1_762_100_000_000L,
+                1_762_100_300_000L, "Asked the wheat price at Karnal.", List.of()));
+        NameCheckBrain checking = new NameCheckBrain();
+        Gate gate = new Gate();
+        checking.whileThinking = text -> {
+            if (text.equals(NameCheckBrain.YES)) {
+                gate.pass(); // the brain has read the name check but not settled it yet
+            }
+        };
+        String again = "gehun ka bhaav batao";
+        FakeLeg leg = join(pipeline(checking, store, stt, tts), FakeLeg.farmer(callId));
+        assertThat(spoken()).containsExactly(NameCheckBrain.NAME_QUESTION);
+        leg.finishPlayback();
+
+        // The returning farmer confirms their name; an executor thread asks the brain and is held mid-call.
+        session().say(NameCheckBrain.YES);
+        CompletableFuture<Void> first = onAnotherThread(executor::runNext);
+        gate.awaitArrival();
+
+        // Before the reply, the farmer speaks again. That turn must not reach the brain while the first call runs.
+        session().say(again);
+        assertThat(executor.pending()).as("no second brain call is started while the first one runs").isZero();
+
+        gate.open();
+        assertThat(first).succeedsWithin(WAIT);
+        executor.runAll();
+
+        assertThat(checking.mostInFlight).as("brain calls never overlap").hasValue(1);
+        assertThat(checking.calls).containsExactly("start greet", "end greet",
+                "start respond " + NameCheckBrain.YES, "end respond " + NameCheckBrain.YES,
+                "start respond " + again, "end respond " + again);
+        assertThat(checking.seen).containsExactly(NameCheckBrain.YES + ": ASKED", again + ": CONFIRMED");
+        assertThat(checking.check()).isEqualTo(NameCheckBrain.Check.CONFIRMED);
+        assertThat(spoken()).as("the superseded reply is never spoken")
+                .containsExactly(NameCheckBrain.NAME_QUESTION, NameCheckBrain.replyTo(again));
+        assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).extracting(ConsoleEvent.AssistantSaid::text)
+                .containsExactly(NameCheckBrain.NAME_QUESTION, NameCheckBrain.replyTo(again));
     }
 
     // ---- helpers ----

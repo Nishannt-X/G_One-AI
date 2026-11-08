@@ -55,6 +55,10 @@ import org.slf4j.LoggerFactory;
  *   <li>Only the newest turn's reply reaches the farmer. Every new turn, barge-in or hang-up moves the leg to a new
  *       "generation"; a greeting, reply or synthesis frame from an older generation is dropped. The greeting reserves
  *       its generation before the session opens, so a turn heard first replaces it.</li>
+ *   <li>At most one brain call (greeting or reply) runs per leg at a time. The brain keeps per-call state, such as the
+ *       memory name check, so a newer turn heard while the brain still answers an older one waits until that call
+ *       returns; the older reply is then dropped as stale and the newer turn is answered. Only the newest waiting turn
+ *       is kept, and a turn that is already stale when the brain is free is never sent to it.</li>
  *   <li>Barge-in: speech start while the assistant is speaking (synthesising or still playing) clears the leg's queued
  *       audio and cancels the synthesis.</li>
  *   <li>Speech start while the brain is still preparing a reply (or the greeting) holds that reply: it does not start
@@ -65,7 +69,7 @@ import org.slf4j.LoggerFactory;
  *       when that report has not come within the goodbye's length plus a grace period. A barge-in, a newer turn or a
  *       clear by anyone else cancels the hang-up and the conversation goes on.</li>
  *   <li>A goodbye whose audio is missing or incomplete (synthesis failed to start, failed or was cancelled midway, or
- *       produced no frames, or a frame could not be played) is never counted as heard. The pipeline says the fixed
+ *       produced no audio, or a frame could not be played) is never counted as heard. The pipeline says the fixed
  *       goodbye for the language once instead. If that fails too, it waits for the audio already queued plus the grace
  *       period and then hangs up with reason {@code goodbye_failed}, unless the farmer speaks first.</li>
  *   <li>When the leg ends: close the session, cancel speech, publish {@code leg_ended} and {@code call_ended}, and run
@@ -256,6 +260,10 @@ public final class CallPipeline {
         private long greetingGeneration;
         /** The generation whose reply (or greeting) the brain is preparing; 0 when none is on the way. */
         private long thinkingFor;
+        /** True while a brain call for this leg runs; only one runs at a time. */
+        private boolean brainBusy;
+        /** The newest brain call waiting for {@link #brainBusy} to clear; null when none waits. */
+        private BrainCall waitingCall;
         /** A reply the farmer started speaking over before it was ready; null when nothing is held. */
         private Hold hold;
         private CallContext context;
@@ -339,7 +347,7 @@ public final class CallPipeline {
             }
             CallContext ctx = context;
             long g = greetingGeneration;
-            background("greet", () -> think(g, "greet", () -> brain.greet(ctx), ctx.language()));
+            askBrainLater(new BrainCall(g, "greet", () -> brain.greet(ctx), ctx.language()));
         }
 
         private LoadedMemory readMemory() {
@@ -462,18 +470,58 @@ public final class CallPipeline {
             }
             publish(ConsoleEvent.TurnHeard.of(callId, turn, now()));
             CallContext ctx = context;
-            background("respond", () -> think(g, "respond", () -> brain.respond(ctx, history, turn), ctx.language()));
+            askBrainLater(new BrainCall(g, "respond", () -> brain.respond(ctx, history, turn), ctx.language()));
         }
 
         // ---- speaking ----
 
-        /** Background: asks the brain unless {@code g} is already stale, and hands the reply to the mailbox. */
-        private void think(long g, String what, Supplier<Reply> call, Language language) {
-            if (ended || generation != g) {
-                return; // a newer turn, a barge-in or the hang-up came first; skip the brain call
+        /**
+         * In the mailbox: starts {@code call} now when the brain is free for this leg, or keeps it as the one waiting
+         * call otherwise. A call already waiting is older, so it is stale and is replaced.
+         */
+        private void askBrainLater(BrainCall call) {
+            if (brainBusy) {
+                log.debug("The brain is still answering an older turn on leg {}; the newer one waits", leg.id());
+                waitingCall = call;
+                return;
             }
-            Reply reply = askBrain(what, call, language);
-            mailbox.post(() -> replyReady(g, reply));
+            brainBusy = true;
+            if (!background(call.what(), () -> think(call))) {
+                brainBusy = false;
+            }
+        }
+
+        /**
+         * Background: asks the brain unless {@code call} is already stale, and always reports back to the mailbox, so
+         * the leg's brain is never left marked busy.
+         */
+        private void think(BrainCall call) {
+            Reply reply = null;
+            try {
+                if (!ended && generation == call.generation()) { // else a newer turn, a barge-in or the end came first
+                    reply = askBrain(call.what(), call.call(), call.language());
+                }
+            } finally {
+                Reply r = reply;
+                mailbox.post(() -> brainDone(call, r));
+            }
+        }
+
+        /**
+         * In the mailbox: the brain call for {@code call} returned ({@code reply} is null when it was skipped as
+         * stale). The brain is free again, so the waiting call, if still current, starts before this reply is
+         * handled; a stale reply is dropped by {@link #replyReady}.
+         */
+        private void brainDone(BrainCall call, Reply reply) {
+            brainBusy = false;
+            BrainCall next = waitingCall;
+            waitingCall = null;
+            if (next != null && !ended && generation == next.generation()) {
+                askBrainLater(next);
+            }
+            if (reply != null) {
+                replyReady(call.generation(), reply);
+            }
         }
 
         /**
@@ -553,6 +601,9 @@ public final class CallPipeline {
         private void framePlayed(Utterance u, AudioFrame frame) {
             if (speaking != u) {
                 return;
+            }
+            if (frame.samples() == 0) {
+                return; // nothing to hear; an utterance made only of these counts as no audio
             }
             try {
                 leg.play(frame);
@@ -723,6 +774,7 @@ public final class CallPipeline {
             generation++;
             hold = null;
             thinkingFor = 0;
+            waitingCall = null;
             Utterance u = speaking;
             speaking = null;
             SttSession toClose = session;
@@ -770,8 +822,12 @@ public final class CallPipeline {
             return apology(language);
         }
 
-        /** Runs a slow step on the executor; skipped (and logged) when the executor is shut down. */
-        private void background(String what, Runnable task) {
+        /**
+         * Runs a slow step on the executor; skipped (and logged) when the executor is shut down.
+         *
+         * @return false when the step was not run
+         */
+        private boolean background(String what, Runnable task) {
             try {
                 executor.execute(() -> {
                     try {
@@ -782,7 +838,9 @@ public final class CallPipeline {
                 });
             } catch (RejectedExecutionException e) {
                 log.warn("Pipeline step '{}' was not run for call {}: the executor is shut down", what, callId);
+                return false;
             }
+            return true;
         }
 
         /** Releases something on the executor, or right here when the executor is shut down. */
@@ -832,7 +890,7 @@ public final class CallPipeline {
         Synthesis synthesis;
         /** Length of the audio queued on the leg so far, including a failed goodbye's part before its fallback. */
         long queuedMs;
-        /** Frames of this utterance queued on the leg. */
+        /** Frames of this utterance with audio in them queued on the leg; empty frames are not played or counted. */
         int framesQueued;
         /** True once a frame of this utterance could not be queued. */
         boolean playFailed;
@@ -862,6 +920,9 @@ public final class CallPipeline {
         Throwable t = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
         return t instanceof CancellationException;
     }
+
+    /** One greeting or reply to ask the brain for, for generation {@code generation}. */
+    private record BrainCall(long generation, String what, Supplier<Reply> call, Language language) {}
 
     /** @param publish false when nothing should be shown: withheld caller ID, or the load failed */
     private record LoadedMemory(FarmerMemory memory, boolean publish) {}

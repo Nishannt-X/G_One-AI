@@ -25,7 +25,9 @@ final class FlakyTextToSpeech implements TextToSpeech {
         /** One frame reaches the sink, then {@code done()} completes as cancelled, as if someone else cancelled it. */
         CANCELLED_AFTER_ONE_FRAME,
         /** {@code done()} completes normally, but no frame ever reaches the sink. */
-        NO_FRAMES
+        NO_FRAMES,
+        /** Two frames with no samples in them reach the sink, then {@code done()} completes normally. */
+        ONLY_EMPTY_FRAMES
     }
 
     private final FakeTextToSpeech delegate = new FakeTextToSpeech();
@@ -61,6 +63,11 @@ final class FlakyTextToSpeech implements TextToSpeech {
                 done.cancel(false);
             }
             case NO_FRAMES -> done.complete(null);
+            case ONLY_EMPTY_FRAMES -> {
+                sink.accept(new AudioFrame(new byte[0], sampleRate, 0));
+                sink.accept(AudioFrame.silence(sampleRate, 0, 0));
+                done.complete(null);
+            }
         }
         return new Synthesis() {
             @Override

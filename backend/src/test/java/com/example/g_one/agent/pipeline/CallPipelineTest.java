@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
@@ -293,6 +294,62 @@ class CallPipelineTest {
         assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).extracting(ConsoleEvent.AssistantSaid::text)
                 .containsExactly(GREETING, replyTo("second"));
         assertThat(leg.played()).hasSize(framesFor(GREETING).size() + framesFor(replyTo("second")).size());
+    }
+
+    // ---- one brain call per leg at a time ----
+
+    @Test
+    void aTurnHeardWhileTheGreetingIsPreparedIsAskedOnlyAfterTheGreetingCallReturns() {
+        AtomicInteger queuedDuringGreeting = new AtomicInteger(-1);
+        brain.whileGreeting = () -> {
+            session().say("haan");
+            queuedDuringGreeting.set(executor.pending());
+        };
+
+        join(FakeLeg.farmer(callId));
+
+        assertThat(queuedDuringGreeting).as("no reply is asked for while the greeting call runs").hasValue(0);
+        assertThat(brain.responds).extracting(c -> c.latest().text()).containsExactly("haan");
+        assertThat(spoken()).containsExactly(replyTo("haan"));
+    }
+
+    @Test
+    void onlyTheNewestTurnWaitingForTheBrainIsAsked() {
+        FakeLeg leg = join(FakeLeg.farmer(callId));
+        leg.finishPlayback();
+        brain.whileThinking = text -> {
+            if (text.equals("a")) {
+                session().say("b");
+                session().say("c");
+            }
+        };
+
+        session().say("a");
+        executor.runAll();
+
+        assertThat(brain.responds).extracting(c -> c.latest().text()).containsExactly("a", "c");
+        assertThat(brain.responds.get(1).history())
+                .containsExactly(assistant(GREETING), farmer("a"), farmer("b"));
+        assertThat(spoken()).containsExactly(GREETING, replyTo("c"));
+    }
+
+    @Test
+    void aTurnWaitingForTheBrainIsNotAskedAfterTheFarmerHangsUp() {
+        FakeLeg leg = join(FakeLeg.farmer(callId));
+        leg.finishPlayback();
+        brain.whileThinking = text -> {
+            if (text.equals("a")) {
+                session().say("b");
+                leg.remoteHangup();
+            }
+        };
+
+        session().say("a");
+        executor.runAll();
+
+        assertThat(brain.responds).extracting(c -> c.latest().text()).containsExactly("a");
+        assertThat(spoken()).containsExactly(GREETING);
+        assertThat(eventsOf(ConsoleEvent.CallEnded.class)).hasSize(1);
     }
 
     @Test
@@ -679,6 +736,19 @@ class CallPipelineTest {
                 .satisfies(e -> assertThat(e.reason()).isEqualTo(CallPipeline.ASSISTANT_HANGUP));
         assertThat(endedCalls).singleElement().satisfies(c -> assertThat(c.transcript()).endsWith(
                 assistant(replyTo("bye")), assistant(CallPipeline.FALLBACK_GOODBYE)));
+    }
+
+    @Test
+    void framesWithNoSamplesAreNeverPlayed() {
+        AudioFrame empty = new AudioFrame(new byte[0], RATE, 0);
+        TextToSpeech padded = (text, language, rate, sink) -> {
+            sink.accept(empty);
+            return tts.speak(text, language, rate, sink);
+        };
+
+        FakeLeg leg = join(pipelineWith(store, padded, stt, List.of(endedCalls::add)), FakeLeg.farmer(callId));
+
+        assertThat(leg.played()).isEqualTo(framesFor(GREETING));
     }
 
     @Test
