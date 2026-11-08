@@ -33,8 +33,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * The call pipeline against the core fakes only. Background steps run on a {@link ManualExecutor}, so every test is
- * deterministic: the test decides when memory loads, when the brain answers and in which order.
+ * The call pipeline against the core fakes only. Background steps run on a {@link ManualExecutor} and timers on
+ * {@link ManualDelays}, so every test is deterministic: the test decides when memory loads, when the brain answers and in
+ * which order. Races between threads are in {@link CallPipelineRaceTest}.
  */
 class CallPipelineTest {
     private static final int RATE = CallPipeline.TELEPHONY_SAMPLE_RATE;
@@ -42,6 +43,7 @@ class CallPipelineTest {
 
     private final AtomicLong clock = new AtomicLong(1_762_600_000_000L);
     private final ManualExecutor executor = new ManualExecutor();
+    private final ManualDelays delays = new ManualDelays();
     private final ScriptedBrain brain = new ScriptedBrain();
     private final FakeSpeechToText stt = new FakeSpeechToText(clock::get);
     private final FakeTextToSpeech tts = new FakeTextToSpeech();
@@ -61,7 +63,8 @@ class CallPipelineTest {
     private LegRegistry pipelineWith(MemoryStore memory, TextToSpeech speech, SpeechToText hearing,
                                      List<CallEndHandler> handlers) {
         LegRegistry r = new LegRegistry();
-        new CallPipeline(brain, hearing, speech, memory, bus, handlers, executor, clock::get).attach(r);
+        new CallPipeline(brain, hearing, speech, memory, bus, handlers, executor, clock::get,
+                CallPipeline.DEFAULT_GOODBYE_GRACE, delays).attach(r);
         return r;
     }
 
@@ -288,6 +291,7 @@ class CallPipelineTest {
         session().say("b");
         executor.runLast(); // "b" first
         executor.runNext(); // then the stale "a"
+        executor.runAll(); // the synthesis of the reply to "b"
 
         assertThat(brain.responds).extracting(c -> c.latest().text()).containsExactly("b");
         assertThat(spoken()).containsExactly(GREETING, replyTo("b"));
@@ -319,12 +323,15 @@ class CallPipelineTest {
 
         leg.finishPlayback();
 
-        assertThat(leg.isEnded()).isTrue();
-        assertThat(leg.hungUpByUs()).isTrue();
+        // The call is over at once; the transport hang-up runs on the executor.
         assertThat(eventsOf(ConsoleEvent.CallEnded.class)).singleElement()
                 .satisfies(e -> assertThat(e.reason()).isEqualTo("assistant_hangup"));
         executor.runAll();
+        assertThat(leg.isEnded()).isTrue();
+        assertThat(leg.hungUpByUs()).isTrue();
         assertThat(endedCalls).singleElement().satisfies(c -> assertThat(c.reason()).isEqualTo("assistant_hangup"));
+        delays.fireAll(); // the goodbye timeout fires later and changes nothing
+        assertThat(eventsOf(ConsoleEvent.CallEnded.class)).hasSize(1);
     }
 
     @Test
@@ -338,7 +345,6 @@ class CallPipelineTest {
 
         leg.remoteHangup();
 
-        assertThat(session().isClosed()).isTrue();
         ConsoleEvent.CallEnded callEnded = eventsOf(ConsoleEvent.CallEnded.class).get(0);
         assertThat(callEnded.durationMs()).isEqualTo(42_000);
         assertThat(callEnded.reason()).isEqualTo("hangup");
@@ -350,6 +356,7 @@ class CallPipelineTest {
 
         executor.runAll();
 
+        assertThat(session().isClosed()).isTrue();
         assertThat(endedCalls).singleElement().satisfies(c -> {
             assertThat(c.callId()).isEqualTo(callId);
             assertThat(c.callerKey()).contains(FakeLeg.FARMER_KEY);

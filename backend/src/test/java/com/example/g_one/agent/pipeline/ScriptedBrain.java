@@ -27,6 +27,8 @@ final class ScriptedBrain implements AgentBrain {
     volatile boolean failRespond;
     /** Runs inside {@link #respond} before it returns, with the turn text. */
     volatile Consumer<String> whileThinking = text -> {};
+    /** Runs inside {@link #greet} before it returns. */
+    volatile Runnable whileGreeting = () -> {};
 
     static String replyTo(String turn) {
         return "reply to " + turn;
@@ -35,6 +37,7 @@ final class ScriptedBrain implements AgentBrain {
     @Override
     public Reply greet(CallContext ctx) {
         greets.add(ctx);
+        whileGreeting.run();
         if (failGreet) {
             throw new IllegalStateException("brain down (test)");
         }
