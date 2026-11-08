@@ -15,6 +15,7 @@ import com.example.g_one.fakes.FakeLeg;
 import com.example.g_one.fakes.FakeLlm;
 import com.example.g_one.speech.LlmClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -25,6 +26,9 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** The gist writer against the fake LLM server and the reference store. Nothing leaves the machine. */
 class GistWriterTest {
@@ -287,6 +291,155 @@ class GistWriterTest {
         assertThat(memory().gists().get(0).summary())
                 .isEqualTo(GistWriter.OTHER_SPEAKER_PREFIX + "Call 2026-11-08: outcome not recorded.");
         assertThat(memory().facts()).containsExactly(SAID_DISTRICT, SAID_CROP);
+    }
+
+    private static CallTranscript call(CallId id, long start, String farmerLine) {
+        return new CallTranscript(id, start, start + 60_000, List.of(
+                CallTranscript.Line.assistant("Namaste, Suresh ji?", start),
+                new CallTranscript.Line(CallTranscript.Speaker.FARMER, farmerLine, start + 1_000)),
+                false, Optional.empty());
+    }
+
+    private static List<String> openFollowUps(MemoryStore s) {
+        return s.load(SURESH).orElseThrow().gists().stream().flatMap(g -> g.followUps().stream()).toList();
+    }
+
+    private static MemoryStore storeOfKind(String kind, Path dir) {
+        return kind.equals("sqlite") ? SqliteMemoryStore.open(dir) : new InMemoryMemoryStore();
+    }
+
+    private static void closeStore(MemoryStore s) {
+        if (s instanceof SqliteMemoryStore sqlite) {
+            sqlite.close();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"in-memory", "sqlite"})
+    void aFollowUpClosedInCallTwoIsNoLongerOpenInCallThree(String kind, @TempDir Path dir) throws Exception {
+        MemoryStore s = storeOfKind(kind, dir);
+        try (GistWriter w = writerFor(s, llm.baseUrl(), FakeLlm.KEY, "fake-model")) {
+            CallId one = CallId.of("c-1103");
+            CallId two = CallId.of("c-1105");
+            CallId three = CallId.of("c-1108");
+            llmAnswers(Map.of("gist", "Suresh has 20 quintal red onion and wants a buyer.",
+                    "followUps", List.of(
+                            Map.of("text", "Find a buyer for red onion", "dueHint", "2026-11-05", "status", "OPEN"),
+                            Map.of("text", "Ask about the tomato crop", "status", "OPEN")),
+                    "profileUpdates", List.of()));
+            w.write(FarmerMemory.empty(SURESH), call(one, START - 5 * DAY, "Pyaaz bechna hai"));
+
+            llmAnswers(Map.of("gist", "Connected Suresh to Shinde Traders for the red onion.",
+                    "followUps", List.of(
+                            Map.of("id", "F1", "text", "Find a buyer for red onion", "status", "DONE"),
+                            Map.of("text", "Send the pickup time", "status", "OPEN")),
+                    "profileUpdates", List.of()));
+            w.write(FarmerMemory.empty(SURESH), call(two, START - 3 * DAY, "Buyer mil gaya, shukriya"));
+
+            String sentInCallTwo = llm.requests().get(1).path("messages").path(1).path("content").asText();
+            assertThat(JSON.readTree(sentInCallTwo).path("openFollowUps").toString())
+                    .contains("\"id\":\"F1\"", "Find a buyer for red onion (due ~2026-11-05)");
+
+            // Call three loads the memory: the follow-up closed in call two is gone, the others stay open.
+            assertThat(openFollowUps(s)).containsExactlyInAnyOrder("Ask about the tomato crop", "Send the pickup time");
+            CallGist first = s.load(SURESH).orElseThrow().gists().stream()
+                    .filter(g -> g.callId().equals(one)).findFirst().orElseThrow();
+            assertThat(first.summary()).as("only the follow-up changes")
+                    .isEqualTo("Suresh has 20 quintal red onion and wants a buyer.");
+            assertThat(first.startedMs()).isEqualTo(START - 5 * DAY);
+
+            llmAnswers(Map.of("gist", "Suresh asked about tomato.", "followUps", List.of(),
+                    "profileUpdates", List.of()));
+            w.write(FarmerMemory.empty(SURESH), call(three, START, "Tamatar ka kya?"));
+            String sentInCallThree = llm.requests().get(2).path("messages").path(1).path("content").asText();
+            assertThat(JSON.readTree(sentInCallThree).path("openFollowUps").toString())
+                    .doesNotContain("Find a buyer").contains("Ask about the tomato crop", "Send the pickup time");
+        } finally {
+            closeStore(s);
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"in-memory", "sqlite"})
+    void aDoneFollowUpWithoutAnIdIsMatchedByItsTextAndUnknownOnesChangeNothing(String kind, @TempDir Path dir)
+            throws Exception {
+        MemoryStore s = storeOfKind(kind, dir);
+        try (GistWriter w = writerFor(s, llm.baseUrl(), FakeLlm.KEY, "fake-model")) {
+            s.saveGist(SURESH, new CallGist(CallId.of("c-1103"), START - 2 * DAY, START - 2 * DAY + 60_000,
+                    "Suresh wants a buyer.", List.of("Find a buyer for red onion (due ~2026-11-06)",
+                            "Ask about the tomato crop")));
+            llmAnswers(Map.of("gist", "Buyer found.",
+                    "followUps", List.of(
+                            Map.of("text", "find a buyer for red onion.", "status", "DONE"),
+                            Map.of("id", "F9", "text", "Ask about the tomato crop", "status", "DONE"),
+                            Map.of("text", "Call the bank", "status", "DONE")),
+                    "profileUpdates", List.of()));
+
+            w.write(FarmerMemory.empty(SURESH), call(CallId.of("c-1108"), START, "Buyer mil gaya"));
+
+            assertThat(openFollowUps(s)).as("F9 was never shown; Call the bank matches nothing")
+                    .containsExactly("Ask about the tomato crop");
+        } finally {
+            closeStore(s);
+        }
+    }
+
+    @Test
+    void anotherSpeakerClosesNoFollowUp() throws Exception {
+        store.saveGist(SURESH, new CallGist(CallId.of("c-1103"), START - DAY, START - DAY + 60_000,
+                "Suresh wants a buyer.", List.of("Find a buyer for red onion")));
+        llmAnswers(Map.of("gist", "Someone called.", "followUps",
+                List.of(Map.of("id", "F1", "text", "Find a buyer for red onion", "status", "DONE")),
+                "profileUpdates", List.of()));
+
+        writer.write(FarmerMemory.empty(SURESH), transcript("Nahin, main Ramesh").withOtherSpeaker(true));
+
+        assertThat(openFollowUps(store)).containsExactly("Find a buyer for red onion");
+    }
+
+    @Test
+    void afterForgetMeAClosedFollowUpDoesNotBringTheOldGistBack() throws Exception {
+        CallId earlier = CallId.of("c-1103");
+        store.saveGist(SURESH, new CallGist(earlier, START - DAY, START - DAY + 60_000,
+                "Suresh wants a buyer.", List.of("Find a buyer for red onion")));
+        FarmerMemory loaded = store.load(SURESH).orElseThrow();
+        // The writer loaded memory before the forget; the rewrite of the earlier gist must still be dropped.
+        MemoryStore racing = new MemoryStore() {
+            private boolean forgotten;
+
+            @Override
+            public Optional<FarmerMemory> load(CallerKey key) {
+                Optional<FarmerMemory> m = forgotten ? store.load(key) : Optional.of(loaded);
+                if (!forgotten) {
+                    store.forget(key, CALL, START + 1);
+                    forgotten = true;
+                }
+                return m;
+            }
+
+            @Override
+            public void saveGist(CallerKey key, CallGist gist) {
+                store.saveGist(key, gist);
+            }
+
+            @Override
+            public void upsertFacts(CallerKey key, List<ProfileFact> facts) {
+                store.upsertFacts(key, facts);
+            }
+
+            @Override
+            public boolean forget(CallerKey key, CallId duringCall, long atMs) {
+                return store.forget(key, duringCall, atMs);
+            }
+        };
+        llmAnswers(Map.of("gist", "Buyer found.", "followUps",
+                List.of(Map.of("id", "F1", "text", "Find a buyer for red onion", "status", "DONE")),
+                "profileUpdates", List.of()));
+        try (GistWriter w = writerFor(racing, llm.baseUrl(), FakeLlm.KEY, "fake-model")) {
+            w.write(FarmerMemory.empty(SURESH), transcript("Buyer mil gaya"));
+        }
+
+        assertThat(store.load(SURESH)).isEmpty();
     }
 
     @Test

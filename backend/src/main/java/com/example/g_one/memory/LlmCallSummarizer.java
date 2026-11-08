@@ -22,15 +22,17 @@ public final class LlmCallSummarizer implements CallSummarizer {
             You write the call memory for G-One, a phone assistant that helps Indian farmers sell produce.
             Reply with ONE JSON object and nothing else:
             {"gist": string,
-             "followUps": [{"text": string, "dueHint": string or null, "status": "OPEN" or "DONE"}],
+             "followUps": [{"text": string, "dueHint": string or null, "status": "OPEN" or "DONE",
+                            "id": string or null}],
              "profileUpdates": [{"field": string, "value": string}]}
             Rules:
             - gist: at most 80 words, third person, plain English. Say what the farmer asked, what happened (prices
               quoted as dated references, buyer connected or not, deal terms both sides said yes to) and what is
               still open. Only facts the transcript states. Never call anything verified, binding or a live price.
             - Never write phone numbers, OTPs, PINs, account, Aadhaar or other ID numbers anywhere.
-            - followUps: things G-One should do on a later call. Mark an earlier open follow-up DONE when this call
-              completed it.
+            - followUps: things G-One should do on a later call. When this call completed an earlier open follow-up
+              (openFollowUps), list it with its "id" and status DONE. Do not repeat an earlier follow-up that is
+              still open; it stays open.
             - profileUpdates: only stable facts about the FARMER (never the buyer). Allowed fields: name, village,
               district, state, crops (one entry per crop), usualMandi, language (one of HI, EN, HI_EN, BN). Leave a
               field out when unsure.
@@ -63,7 +65,9 @@ public final class LlmCallSummarizer implements CallSummarizer {
                     .put("source", f.provenance().saidOrInferred().wire());
         }
         ArrayNode open = root.putArray("openFollowUps");
-        current.gists().stream().limit(3).flatMap(g -> g.followUps().stream()).forEach(open::add);
+        for (OpenFollowUp f : CallSummarizer.openFollowUps(current)) {
+            open.addObject().put("id", f.id()).put("text", f.text());
+        }
         ArrayNode lines = root.putArray("transcript");
         for (CallTranscript.Line line : transcript.lines()) {
             lines.addObject().put("speaker", line.speaker().name().toLowerCase(Locale.ROOT)).put("text", line.text());
@@ -84,7 +88,8 @@ public final class LlmCallSummarizer implements CallSummarizer {
             } else if (f.isObject()) {
                 String due = f.path("dueHint").isTextual() ? f.path("dueHint").asText() : null;
                 boolean open = !"DONE".equalsIgnoreCase(f.path("status").asText("OPEN"));
-                followUps.add(new FollowUp(f.path("text").asText(""), due, open));
+                String ref = f.path("id").isTextual() ? f.path("id").asText() : null;
+                followUps.add(new FollowUp(f.path("text").asText(""), due, open, ref));
             }
         }
         List<FactUpdate> updates = new ArrayList<>();
