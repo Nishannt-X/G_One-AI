@@ -1,0 +1,22 @@
+{
+  "_comment": "Farming districts the weather tool knows, with the approximate latitude/longitude of the district headquarters (public geography). Aliases cover other spellings and the names as Prisma may write them in Devanagari or Bengali script. Matching ignores case, spaces, dots and hyphens.",
+  "districts": [
+    {"name": "Nashik", "state": "Maharashtra", "lat": 19.9975, "lon": 73.7898, "aliases": ["Nasik", "नाशिक", "नासिक"]},
+    {"name": "Pune", "state": "Maharashtra", "lat": 18.5204, "lon": 73.8567, "aliases": ["Poona", "पुणे"]},
+    {"name": "Ahilyanagar", "state": "Maharashtra", "lat": 19.0948, "lon": 74.7480, "aliases": ["Ahmednagar", "Ahmadnagar", "अहमदनगर", "अहिल्यानगर"]},
+    {"name": "Nagpur", "state": "Maharashtra", "lat": 21.1458, "lon": 79.0882, "aliases": ["नागपुर"]},
+    {"name": "Purba Bardhaman", "state": "West Bengal", "lat": 23.2324, "lon": 87.8615, "aliases": ["Bardhaman", "Burdwan", "Barddhaman", "Purba Burdwan", "East Burdwan", "बर्धमान", "বর্ধমান", "পূর্ব বর্ধমান"]},
+    {"name": "Hooghly", "state": "West Bengal", "lat": 22.9000, "lon": 88.3900, "aliases": ["Hugli", "Hughli", "Chinsurah", "हुगली", "হুগলি", "হুগলী"]},
+    {"name": "Nadia", "state": "West Bengal", "lat": 23.4058, "lon": 88.4900, "aliases": ["Krishnanagar", "नदिया", "নদিয়া", "নদীয়া"]},
+    {"name": "Murshidabad", "state": "West Bengal", "lat": 24.1000, "lon": 88.2500, "aliases": ["Berhampore", "Baharampur", "मुर्शिदाबाद", "মুর্শিদাবাদ"]},
+    {"name": "Ludhiana", "state": "Punjab", "lat": 30.9010, "lon": 75.8573, "aliases": ["लुधियाना"]},
+    {"name": "Bathinda", "state": "Punjab", "lat": 30.2110, "lon": 74.9455, "aliases": ["Bhatinda", "बठिंडा", "भटिंडा"]},
+    {"name": "Karnal", "state": "Haryana", "lat": 29.6857, "lon": 76.9905, "aliases": ["करनाल"]},
+    {"name": "Indore", "state": "Madhya Pradesh", "lat": 22.7196, "lon": 75.8577, "aliases": ["इंदौर"]},
+    {"name": "Ujjain", "state": "Madhya Pradesh", "lat": 23.1765, "lon": 75.7885, "aliases": ["उज्जैन"]},
+    {"name": "Agra", "state": "Uttar Pradesh", "lat": 27.1767, "lon": 78.0081, "aliases": ["आगरा"]},
+    {"name": "Guntur", "state": "Andhra Pradesh", "lat": 16.3067, "lon": 80.4365, "aliases": ["गुंटूर"]},
+    {"name": "Kolar", "state": "Karnataka", "lat": 13.1360, "lon": 78.1290, "aliases": ["कोलार"]},
+    {"name": "Belagavi", "state": "Karnataka", "lat": 15.8497, "lon": 74.4977, "aliases": ["Belgaum", "बेलगाम", "बेलगावी"]}
+  ]
+}
