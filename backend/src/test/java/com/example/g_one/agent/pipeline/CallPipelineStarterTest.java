@@ -3,17 +3,21 @@ package com.example.g_one.agent.pipeline;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.example.g_one.agent.AgentBrain;
+import com.example.g_one.agent.llm.FixedLines;
 import com.example.g_one.core.CallId;
 import com.example.g_one.core.ConsoleBus;
 import com.example.g_one.core.ConsoleEvent;
+import com.example.g_one.core.Language;
 import com.example.g_one.core.LegRegistry;
 import com.example.g_one.core.SpeechToText;
 import com.example.g_one.core.TextToSpeech;
 import com.example.g_one.fakes.FakeLeg;
 import com.example.g_one.fakes.FakeSpeechToText;
 import com.example.g_one.fakes.FakeTextToSpeech;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -59,5 +63,15 @@ class CallPipelineStarterTest {
                     leg.remoteHangup();
                     assertThat(ended.get(5, TimeUnit.SECONDS).callId()).isEqualTo(leg.callId());
                 });
+    }
+
+    @Test
+    void theFixedGoodbyesComeFromTheAgentsFixedLines() {
+        Function<Language, String> goodbyes = CallPipelineStarter.fixedGoodbyes(new FixedLines(new ObjectMapper()));
+
+        assertThat(goodbyes.apply(FakeLeg.HINDI)).isEqualTo("धन्यवाद। नमस्ते।");
+        assertThat(goodbyes.apply(FakeLeg.ENGLISH)).isEqualTo("Thank you. Goodbye.");
+        assertThat(goodbyes.apply(new Language("bn-IN", "Bengali", "test-voice")))
+                .as("a language without its own lines gets the English goodbye").isEqualTo("Thank you. Goodbye.");
     }
 }

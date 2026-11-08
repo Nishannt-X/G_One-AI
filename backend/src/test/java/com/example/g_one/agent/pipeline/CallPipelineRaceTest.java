@@ -69,7 +69,7 @@ class CallPipelineRaceTest {
     private LegRegistry pipeline(MemoryStore memory, SpeechToText hearing, TextToSpeech speech) {
         LegRegistry r = new LegRegistry();
         new CallPipeline(brain, hearing, speech, memory, bus, List.of(endedCalls::add), executor, clock::get, GRACE,
-                HOLD, delays).attach(r);
+                HOLD, CallPipeline.DEFAULT_FIXED_GOODBYES, delays).attach(r);
         return r;
     }
 

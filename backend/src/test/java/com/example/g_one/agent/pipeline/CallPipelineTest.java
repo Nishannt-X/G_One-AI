@@ -16,6 +16,7 @@ import com.example.g_one.core.ConsoleBus;
 import com.example.g_one.core.ConsoleEvent;
 import com.example.g_one.core.FarmerMemory;
 import com.example.g_one.core.InMemoryMemoryStore;
+import com.example.g_one.core.Language;
 import com.example.g_one.core.Leg;
 import com.example.g_one.core.LegRegistry;
 import com.example.g_one.core.LegRole;
@@ -32,6 +33,7 @@ import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -67,9 +69,15 @@ class CallPipelineTest {
 
     private LegRegistry pipelineWith(MemoryStore memory, TextToSpeech speech, SpeechToText hearing,
                                      List<CallEndHandler> handlers) {
+        return pipelineWith(memory, speech, hearing, handlers, CallPipeline.DEFAULT_FIXED_GOODBYES);
+    }
+
+    private LegRegistry pipelineWith(MemoryStore memory, TextToSpeech speech, SpeechToText hearing,
+                                     List<CallEndHandler> handlers, Function<Language, String> goodbyes) {
         LegRegistry r = new LegRegistry();
         new CallPipeline(brain, hearing, speech, memory, bus, handlers, executor, clock::get,
-                CallPipeline.DEFAULT_GOODBYE_GRACE, CallPipeline.DEFAULT_HELD_REPLY_RELEASE, delays).attach(r);
+                CallPipeline.DEFAULT_GOODBYE_GRACE, CallPipeline.DEFAULT_HELD_REPLY_RELEASE, goodbyes, delays)
+                .attach(r);
         return r;
     }
 
@@ -671,6 +679,41 @@ class CallPipelineTest {
                 .satisfies(e -> assertThat(e.reason()).isEqualTo(CallPipeline.ASSISTANT_HANGUP));
         assertThat(endedCalls).singleElement().satisfies(c -> assertThat(c.transcript()).endsWith(
                 assistant(replyTo("bye")), assistant(CallPipeline.FALLBACK_GOODBYE)));
+    }
+
+    @Test
+    void theFixedGoodbyeIsTheConfiguredOneForTheGoodbyesLanguage() {
+        String hindiGoodbye = "धन्यवाद। नमस्ते।";
+        FlakyTextToSpeech flaky = new FlakyTextToSpeech().fail(replyTo("bye"), Failure.THROWS_ON_START);
+        LegRegistry r = pipelineWith(store, flaky, stt, List.of(endedCalls::add),
+                language -> language.equals(FakeLeg.HINDI) ? hindiGoodbye : "wrong language");
+        FakeLeg leg = join(r, FakeLeg.farmer(callId));
+        leg.finishPlayback();
+
+        session().say("bye");
+        executor.runAll();
+
+        assertThat(flaky.spoken()).containsExactly(GREETING, replyTo("bye"), hindiGoodbye);
+        assertThat(eventsOf(ConsoleEvent.AssistantSaid.class)).last()
+                .satisfies(said -> assertThat(said.language()).isEqualTo("hi-IN"));
+        leg.finishPlayback();
+        executor.runAll();
+        assertThat(leg.hungUpByUs()).isTrue();
+    }
+
+    @Test
+    void aFixedGoodbyeLookupThatFailsFallsBackToTheEnglishOne() {
+        FlakyTextToSpeech flaky = new FlakyTextToSpeech().fail(replyTo("bye"), Failure.NO_FRAMES);
+        LegRegistry r = pipelineWith(store, flaky, stt, List.of(endedCalls::add), language -> {
+            throw new IllegalStateException("fixed lines missing (test)");
+        });
+        FakeLeg leg = join(r, FakeLeg.farmer(callId));
+        leg.finishPlayback();
+
+        session().say("bye");
+        executor.runAll();
+
+        assertThat(flaky.spoken()).containsExactly(GREETING, replyTo("bye"), CallPipeline.FALLBACK_GOODBYE);
     }
 
     @Test

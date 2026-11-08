@@ -35,6 +35,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -65,7 +66,7 @@ import org.slf4j.LoggerFactory;
  *       clear by anyone else cancels the hang-up and the conversation goes on.</li>
  *   <li>A goodbye whose audio is missing or incomplete (synthesis failed to start, failed or was cancelled midway, or
  *       produced no frames, or a frame could not be played) is never counted as heard. The pipeline says the fixed
- *       {@link #FALLBACK_GOODBYE} once instead. If that fails too, it waits for the audio already queued plus the grace
+ *       goodbye for the language once instead. If that fails too, it waits for the audio already queued plus the grace
  *       period and then hangs up with reason {@code goodbye_failed}, unless the farmer speaks first.</li>
  *   <li>When the leg ends: close the session, cancel speech, publish {@code leg_ended} and {@code call_ended}, and run
  *       the end handlers in the background.</li>
@@ -98,14 +99,17 @@ public final class CallPipeline {
     public static final Duration DEFAULT_HELD_REPLY_RELEASE = Duration.ofMillis(1500);
 
     /**
-     * Said instead of a goodbye whose audio could not be produced in full. The agent has no fixed per-language goodbye
-     * yet, so this short English word is used for every language.
+     * The fixed goodbye when no per-language one is configured, or looking it up fails: a short English word, used for
+     * every language.
      */
     static final String FALLBACK_GOODBYE = "Goodbye.";
 
+    /** Fixed goodbyes when the agent's fixed lines are not available: {@link #FALLBACK_GOODBYE} for every language. */
+    public static final Function<Language, String> DEFAULT_FIXED_GOODBYES = language -> FALLBACK_GOODBYE;
+
     /** Call end reason after a goodbye the farmer heard, or one whose "played" report never came. */
     static final String ASSISTANT_HANGUP = "assistant_hangup";
-    /** Call end reason when neither the goodbye nor {@link #FALLBACK_GOODBYE} could be spoken. */
+    /** Call end reason when neither the goodbye nor the fixed goodbye after it could be spoken. */
     static final String GOODBYE_FAILED = "goodbye_failed";
 
     static final String HINDI_APOLOGY = "माफ़ कीजिए, कुछ गड़बड़ हो गई। कृपया फिर से बोलिए।";
@@ -127,19 +131,20 @@ public final class CallPipeline {
     private final LongSupplier clock;
     private final long goodbyeGraceMs;
     private final long heldReplyReleaseMs;
+    private final Function<Language, String> fixedGoodbyes;
     private final Delays delays;
 
     /**
-     * A pipeline with the {@link #DEFAULT_GOODBYE_GRACE} and the {@link #DEFAULT_HELD_REPLY_RELEASE} whose timers run
-     * on {@code executor}.
+     * A pipeline with the {@link #DEFAULT_GOODBYE_GRACE}, the {@link #DEFAULT_HELD_REPLY_RELEASE} and the
+     * {@link #DEFAULT_FIXED_GOODBYES}, whose timers run on {@code executor}.
      *
      * @see #CallPipeline(AgentBrain, SpeechToText, TextToSpeech, MemoryStore, ConsoleBus, List, Executor,
-     *     LongSupplier, Duration, Duration, Delays)
+     *     LongSupplier, Duration, Duration, Function, Delays)
      */
     public CallPipeline(AgentBrain brain, SpeechToText speechToText, TextToSpeech textToSpeech, MemoryStore memory,
                         ConsoleBus bus, List<CallEndHandler> endHandlers, Executor executor, LongSupplier clock) {
         this(brain, speechToText, textToSpeech, memory, bus, endHandlers, executor, clock, DEFAULT_GOODBYE_GRACE,
-                DEFAULT_HELD_REPLY_RELEASE, executorDelays(executor));
+                DEFAULT_HELD_REPLY_RELEASE, DEFAULT_FIXED_GOODBYES, executorDelays(executor));
     }
 
     /**
@@ -149,11 +154,13 @@ public final class CallPipeline {
      * @param clock epoch milliseconds for console events and call times
      * @param goodbyeGrace how long past the goodbye's length to wait for the leg to confirm it was heard
      * @param heldReplyRelease how long a reply held by the farmer's speech start waits for a final turn before it plays
+     * @param fixedGoodbyes the fixed goodbye to say, in a language, when the brain's goodbye could not be spoken
      * @param delays runs the goodbye timeouts and the held-reply release
      */
     public CallPipeline(AgentBrain brain, SpeechToText speechToText, TextToSpeech textToSpeech, MemoryStore memory,
                         ConsoleBus bus, List<CallEndHandler> endHandlers, Executor executor, LongSupplier clock,
-                        Duration goodbyeGrace, Duration heldReplyRelease, Delays delays) {
+                        Duration goodbyeGrace, Duration heldReplyRelease, Function<Language, String> fixedGoodbyes,
+                        Delays delays) {
         this.brain = Objects.requireNonNull(brain, "brain");
         this.speechToText = Objects.requireNonNull(speechToText, "speechToText");
         this.textToSpeech = Objects.requireNonNull(textToSpeech, "textToSpeech");
@@ -170,6 +177,7 @@ public final class CallPipeline {
             throw new IllegalArgumentException("heldReplyRelease must not be negative");
         }
         this.heldReplyReleaseMs = heldReplyRelease.toMillis();
+        this.fixedGoodbyes = Objects.requireNonNull(fixedGoodbyes, "fixedGoodbyes");
         this.delays = Objects.requireNonNull(delays, "delays");
     }
 
@@ -193,6 +201,20 @@ public final class CallPipeline {
             return;
         }
         new FarmerLeg(leg).begin();
+    }
+
+    /** The fixed goodbye for {@code language}; {@link #FALLBACK_GOODBYE} when there is none or the lookup fails. */
+    private String fixedGoodbye(Language language) {
+        try {
+            String line = fixedGoodbyes.apply(language);
+            if (line != null && !line.isBlank()) {
+                return line;
+            }
+            log.warn("No fixed goodbye for {}; using the English one", language.code());
+        } catch (RuntimeException e) {
+            log.warn("Could not look up the fixed goodbye for {}; using the English one", language.code(), e);
+        }
+        return FALLBACK_GOODBYE;
     }
 
     /** The spoken apology used when the brain throws or returns nothing, against its contract. */
@@ -580,16 +602,18 @@ public final class CallPipeline {
 
         /**
          * In the mailbox, for a current goodbye whose audio is missing or incomplete. The first time, say the fixed
-         * {@link #FALLBACK_GOODBYE} instead, after whatever part of the goodbye was queued. If that fails too, there is
-         * no goodbye to wait for: hang up with reason {@link #GOODBYE_FAILED} once the audio already queued and the
-         * grace period have passed. Until then the assistant counts as speaking, so the farmer speaking still
-         * interrupts it and the call goes on.
+         * goodbye for its language instead, after whatever part of the goodbye was queued. It is voiced in the
+         * goodbye's language even when the fixed line is the English one. If that fails too, there is no goodbye to
+         * wait for: hang up with reason {@link #GOODBYE_FAILED} once the audio already queued and the grace period
+         * have passed. Until then the assistant counts as speaking, so the farmer speaking still interrupts it and the
+         * call goes on.
          */
         private void goodbyeNotSpoken(Utterance u) {
             if (!u.fallback) {
                 log.info("The goodbye on leg {} could not be synthesised in full; saying the fixed goodbye instead",
                         leg.id());
-                speak(new Utterance(new Reply(FALLBACK_GOODBYE, u.reply.language(), true), true, u.queuedMs));
+                Language language = u.reply.language();
+                speak(new Utterance(new Reply(fixedGoodbye(language), language, true), true, u.queuedMs));
                 return;
             }
             long waitMs = u.queuedMs + goodbyeGraceMs;
@@ -802,7 +826,7 @@ public final class CallPipeline {
      */
     private static final class Utterance {
         final Reply reply;
-        /** True for the {@link #FALLBACK_GOODBYE} said after a goodbye that could not be spoken. */
+        /** True for the fixed goodbye said after a goodbye that could not be spoken. */
         final boolean fallback;
         /** Set while the synthesis runs. */
         Synthesis synthesis;

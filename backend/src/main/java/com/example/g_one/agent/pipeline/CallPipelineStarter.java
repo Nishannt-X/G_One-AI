@@ -1,8 +1,10 @@
 package com.example.g_one.agent.pipeline;
 
 import com.example.g_one.agent.AgentBrain;
+import com.example.g_one.agent.llm.FixedLines;
 import com.example.g_one.core.ConsoleBus;
 import com.example.g_one.core.InMemoryMemoryStore;
+import com.example.g_one.core.Language;
 import com.example.g_one.core.LegRegistry;
 import com.example.g_one.core.MemoryStore;
 import com.example.g_one.core.SpeechToText;
@@ -12,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -24,7 +27,9 @@ import org.springframework.stereotype.Component;
  * Wires the {@link CallPipeline} into the app once every bean exists. The brain (#19), speech-to-text and
  * text-to-speech are built in other issues, so until each has exactly one bean the pipeline stays off and says so in
  * the log; the app still starts. Without a {@link MemoryStore} bean it uses an {@link InMemoryMemoryStore} (lost on
- * restart). Every {@link CallEndHandler} bean (such as the gist writer, #20) runs at hang-up, in {@code @Order}.
+ * restart). Every {@link CallEndHandler} bean (such as the gist writer, #20) runs at hang-up, in {@code @Order}. When
+ * the agent's {@link FixedLines} bean exists, its per-language goodbye is the one said after a goodbye that could not
+ * be spoken; without it the pipeline says {@link CallPipeline#DEFAULT_FIXED_GOODBYES}.
  *
  * <p>Brain calls, memory loads and end handlers run on virtual threads, one per task.
  *
@@ -47,6 +52,7 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
     private final ObjectProvider<TextToSpeech> textToSpeech;
     private final ObjectProvider<MemoryStore> memory;
     private final ObjectProvider<CallEndHandler> endHandlers;
+    private final ObjectProvider<FixedLines> fixedLines;
     private final Duration goodbyeGrace;
     private final Duration heldReplyRelease;
     private ExecutorService executor;
@@ -55,6 +61,7 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
     CallPipelineStarter(LegRegistry registry, ConsoleBus bus, ObjectProvider<AgentBrain> brain,
                         ObjectProvider<SpeechToText> speechToText, ObjectProvider<TextToSpeech> textToSpeech,
                         ObjectProvider<MemoryStore> memory, ObjectProvider<CallEndHandler> endHandlers,
+                        ObjectProvider<FixedLines> fixedLines,
                         @Value("${g-one.pipeline.goodbye-grace-ms:8000}") long goodbyeGraceMs,
                         @Value("${g-one.pipeline.held-reply-release-ms:1500}") long heldReplyReleaseMs) {
         this.registry = registry;
@@ -64,6 +71,7 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
         this.textToSpeech = textToSpeech;
         this.memory = memory;
         this.endHandlers = endHandlers;
+        this.fixedLines = fixedLines;
         this.goodbyeGrace = Duration.ofMillis(goodbyeGraceMs);
         this.heldReplyRelease = Duration.ofMillis(heldReplyReleaseMs);
     }
@@ -91,11 +99,20 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
             log.info("No MemoryStore bean; the call pipeline keeps memory in RAM until restart");
             return new InMemoryMemoryStore();
         });
+        FixedLines lines = fixedLines.getIfUnique();
+        Function<Language, String> goodbyes =
+                lines != null ? fixedGoodbyes(lines) : CallPipeline.DEFAULT_FIXED_GOODBYES;
         executor = Executors.newVirtualThreadPerTaskExecutor();
         pipeline = new CallPipeline(b, stt, tts, store, bus, endHandlers.orderedStream().toList(), executor,
-                System::currentTimeMillis, goodbyeGrace, heldReplyRelease, CallPipeline.executorDelays(executor));
+                System::currentTimeMillis, goodbyeGrace, heldReplyRelease, goodbyes,
+                CallPipeline.executorDelays(executor));
         pipeline.attach(registry);
         log.info("The call pipeline is on");
+    }
+
+    /** The agent's fixed goodbye for a language (its own entry, else one with the same prefix, else English). */
+    static Function<Language, String> fixedGoodbyes(FixedLines lines) {
+        return language -> lines.forLanguage(language.code()).goodbye();
     }
 
     /** The running pipeline, or null when it is off. */
