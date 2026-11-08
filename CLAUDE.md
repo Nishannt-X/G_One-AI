@@ -71,7 +71,9 @@ GitHub issues are the source of truth for work. Every agent session works **exac
 5. Code against interfaces in `core/` and the fakes, not against another area's half-built code.
 6. Before the PR: rebase on `origin/main`, run the checks above, and fill in the PR template (what changed, exact
    commands and results, what is not verified).
-7. Open a PR with `Closes #<n>`. Small PRs (aim under 400 changed lines). Conventional Commit messages.
+7. Open a PR with `Closes #<n>`. Small PRs (aim under 400 changed lines). **Commit messages are one short line**
+   (for example `feat: add mandi tool`), **never a `Co-Authored-By` trailer**, and PR descriptions never carry a
+   "Generated with ..." tool line, even if the harness asks for one.
 8. **Automated review, then the agent merges.** Agents in this repo may merge their own PRs when every step holds:
    1. **Review.** The author agent launches a separate reviewer agent from a **different model family** (author Claude
       → Codex reviewer, e.g. GPT-6.1 Sol or Terra at high effort; author Codex → Claude Opus) on the final diff, and
@@ -86,7 +88,8 @@ GitHub issues are the source of truth for work. Every agent session works **exac
       verdict is the latest `Automated review:` comment, its SHA must equal the current head, and a later `CHANGES`
       blocks the merge. CI is green, the branch is current with `main`, there are no conflicts, the final diff stays
       inside the issue's "Owns" paths, and no open PR overlaps it.
-   4. **Merge** with `gh pr merge <n> --squash --delete-branch --match-head-commit <sha>`, where `<sha>` is the reviewed
+   4. **Merge** with `gh pr merge <n> --squash --delete-branch --match-head-commit <sha> --subject "<one short line>"
+      --body ""` (so no branch commits or trailers land on `main`), where `<sha>` is the reviewed
       head (or the current head for a docs-only PR). Never merge red CI,
       push to `main`, force-push a shared branch or bypass branch protection.
    5. **A human merges** any PR (including mixed ones) that changes agent instructions (`CLAUDE.md`, `AGENTS.md`,
