@@ -129,8 +129,14 @@ class SimulatorSocketTest {
         return b;
     }
 
-    private Leg legOf(JsonNode ready) {
-        return registry.find(LegId.of(ready.get("legId").asText())).orElseThrow();
+    /**
+     * The leg named in a "ready" message. The server sends "ready" before it registers the leg (so the browser has its
+     * ids before the pipeline starts talking), so wait briefly for the registration instead of racing it.
+     */
+    private Leg legOf(JsonNode ready) throws InterruptedException {
+        LegId id = LegId.of(ready.get("legId").asText());
+        awaitTrue(() -> registry.find(id).isPresent());
+        return registry.find(id).orElseThrow();
     }
 
     private static void awaitTrue(BooleanSupplier condition) throws InterruptedException {
