@@ -4,13 +4,17 @@ import com.example.g_one.agent.AgentBrain;
 import com.example.g_one.agent.brain.LlmAgentBrain;
 import com.example.g_one.agent.pipeline.CallEndHandler;
 import com.example.g_one.agent.tools.memory.MemoryGate;
+import com.example.g_one.core.CallId;
 import com.example.g_one.core.FarmerMemory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -27,8 +31,13 @@ import org.springframework.stereotype.Component;
  *       brain also never let this caller use or change the stored profile.</li>
  *   <li>{@code NEW} and {@code CONFIRMED}: a normal gist with profile updates ({@link GistWriter}).</li>
  * </ul>
- * When the brain never saw the call (the farmer hung up before the greeting), the state is worked out from the memory
- * loaded at call start ({@link MemoryGate#initial}), with the same rules.
+ * When the brain has no state for the call (it expired, was lost, or the brain never saw the call), nothing is written
+ * and nothing goes to the summarizer: the state cannot be rebuilt from the memory loaded at call start, because a
+ * {@code FORGOTTEN} or {@code OTHER_SPEAKER} answer would be lost. {@link GistWriter} also writes nothing when the
+ * memory loaded at call start is gone from the store (a forget happened during the call).
+ *
+ * <p>The writer is given only the memory snapshot loaded at call start ({@code CallContext.memory()}), the one the
+ * name check was asked about; it never reloads the profile for the summarizer.
  *
  * <p>Afterwards, whatever happened, it calls {@link LlmAgentBrain#callEnded} so the brain drops the call's state. It
  * therefore runs last among the end handlers ({@link Ordered#LOWEST_PRECEDENCE}): a handler that needs the memory
@@ -43,28 +52,42 @@ public class GistCallEndHandler implements CallEndHandler {
     enum Action { SKIP, WRITE, WRITE_AS_OTHER_SPEAKER }
 
     private final GistWriter writer;
-    private final LlmAgentBrain brain;
+    private final Function<CallId, Optional<MemoryGate.State>> memoryState;
+    private final Consumer<CallId> dropState;
 
+    @Autowired
     public GistCallEndHandler(GistWriter writer, LlmAgentBrain brain) {
+        this(writer, Objects.requireNonNull(brain, "brain")::memoryState, brain::callEnded);
+    }
+
+    /** For tests: the brain's per-call memory state and its drop, without a whole brain. */
+    GistCallEndHandler(GistWriter writer, Function<CallId, Optional<MemoryGate.State>> memoryState,
+            Consumer<CallId> dropState) {
         this.writer = Objects.requireNonNull(writer, "writer");
-        this.brain = Objects.requireNonNull(brain, "brain");
+        this.memoryState = Objects.requireNonNull(memoryState, "memoryState");
+        this.dropState = Objects.requireNonNull(dropState, "dropState");
     }
 
     @Override
     public void callEnded(EndedCall call) {
         try {
+            Optional<MemoryGate.State> known = memoryState.apply(call.callId());
+            if (known.isEmpty()) {
+                // Fail closed: an expired or lost state may have been FORGOTTEN or OTHER_SPEAKER.
+                log.info("No memory written for call {} (no memory state)", call.callId());
+                return;
+            }
             FarmerMemory atStart = call.context().memory();
-            MemoryGate.State state = brain.memoryState(call.callId()).orElseGet(() -> MemoryGate.initial(atStart));
-            Action action = action(state, atStart);
+            Action action = action(known.get(), atStart);
             if (action == Action.SKIP) {
-                log.info("No memory written for call {} (memory state {})", call.callId(), state);
+                log.info("No memory written for call {} (memory state {})", call.callId(), known.get());
                 return;
             }
             GistWriter.Result result = writer.write(atStart, transcript(call, action == Action.WRITE_AS_OTHER_SPEAKER));
             log.info("Memory for call {}: {} ({} gist, {} profile facts)", call.callId(), result.status(),
                     result.source(), result.facts().size());
         } finally {
-            brain.callEnded(call.callId());
+            dropState.accept(call.callId());
         }
     }
 

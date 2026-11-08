@@ -43,14 +43,19 @@ import org.slf4j.LoggerFactory;
  * the earlier gist that holds it (that gist is saved again under its own call id), so later calls no longer load it
  * as open.
  *
- * <p>The name-check result arrives as {@link CallTranscript#otherSpeaker()}: the call pipeline (#23) sets it to true
- * when the caller did not confirm the stored name. Then the stored memory is never read: the summarizer gets an empty
- * profile and no earlier follow-ups, the template gist names no stored crop, no profile fact is written, and the gist
- * is flagged with {@value #OTHER_SPEAKER_PREFIX}.
+ * <p>The summarizer and the template only ever see the memory snapshot loaded at call start, the one the name check
+ * was asked about; the profile is never reloaded from the store for them. A first-time caller's snapshot is empty, so
+ * their gist holds only this call, even if a profile for the number appeared in the store meanwhile.
  *
- * <p>Nothing is read or written when the caller ID is withheld ({@link FarmerMemory#withheld}). After a
- * {@code forget_me}, the store's tombstone drops this call's writes. Deals are not written here: the confirmation
- * state machine writes them.
+ * <p>The name-check result arrives as {@link CallTranscript#otherSpeaker()}: the call-end handler sets it to true when
+ * the caller did not confirm the stored name. Then even the snapshot is not used: the summarizer gets an empty profile
+ * and no earlier follow-ups, the template gist names no stored crop, no profile fact is written, and the gist is
+ * flagged with {@value #OTHER_SPEAKER_PREFIX}.
+ *
+ * <p>Nothing is read or written when the caller ID is withheld ({@link FarmerMemory#withheld}). When memory existed at
+ * call start but the store now holds nothing for the key, a forget happened meanwhile, so nothing is sent to the
+ * summarizer or written ({@link Status#SKIPPED_FORGOTTEN}). The store's tombstone still drops any write from a call in
+ * which the farmer asked to be forgotten. Deals are not written here: the confirmation state machine writes them.
  */
 public final class GistWriter implements AutoCloseable {
     public static final int MAX_GIST_WORDS = 80;
@@ -60,7 +65,7 @@ public final class GistWriter implements AutoCloseable {
     private static final ZoneId INDIA = ZoneId.of("Asia/Kolkata");
     private static final Logger log = LoggerFactory.getLogger(GistWriter.class);
 
-    public enum Status { SKIPPED_WITHHELD, WRITTEN }
+    public enum Status { SKIPPED_WITHHELD, SKIPPED_FORGOTTEN, WRITTEN }
 
     public enum Source { NONE, SUMMARIZER, TEMPLATE }
 
@@ -69,6 +74,7 @@ public final class GistWriter implements AutoCloseable {
      */
     public record Result(Status status, Source source, Optional<CallGist> gist, List<ProfileFact> facts) {
         static final Result WITHHELD = new Result(Status.SKIPPED_WITHHELD, Source.NONE, Optional.empty(), List.of());
+        static final Result FORGOTTEN = new Result(Status.SKIPPED_FORGOTTEN, Source.NONE, Optional.empty(), List.of());
     }
 
     private final MemoryStore store;
@@ -86,8 +92,8 @@ public final class GistWriter implements AutoCloseable {
     }
 
     /**
-     * @param memoryAtStart the memory loaded at call start; only its caller key is used ({@link FarmerMemory#withheld}
-     *     means write nothing)
+     * @param memoryAtStart the memory snapshot loaded at call start and authorized by the name check: the only memory
+     *     the summarizer and the template see ({@link FarmerMemory#withheld} means write nothing)
      * @param transcript the finished call, in RAM only; it is not stored
      */
     public Result write(FarmerMemory memoryAtStart, CallTranscript transcript) {
@@ -97,11 +103,13 @@ public final class GistWriter implements AutoCloseable {
             return Result.WITHHELD;
         }
         CallerKey key = memoryAtStart.callerKey().orElseThrow();
-        // A failed name check means someone else spoke: they must not hear (via the summarizer) or get written into
-        // the gist anything from the farmer's memory, so the prompt and the template both see an empty memory.
-        FarmerMemory current = transcript.otherSpeaker()
-                ? FarmerMemory.empty(key)
-                : store.load(key).orElse(FarmerMemory.empty(key));
+        if (forgottenSince(key, memoryAtStart)) {
+            return Result.FORGOTTEN;
+        }
+        // Only the call-start snapshot, never a fresh load: the store may hold memory this call was never allowed to
+        // see. A failed name check means someone else spoke: they must not hear (via the summarizer) or get written
+        // into the gist anything from the farmer's memory, so the prompt and the template both see an empty memory.
+        FarmerMemory current = transcript.otherSpeaker() ? FarmerMemory.empty(key) : memoryAtStart;
         CallTranscript scrubbed = scrubbed(transcript);
 
         Optional<CallSummarizer.Draft> draft = draft(scrubbed, current);
@@ -125,6 +133,16 @@ public final class GistWriter implements AutoCloseable {
         store.saveGist(key, gist);
         draft.ifPresent(d -> closeEarlierFollowUps(key, current, d.followUps(), transcript.callId()));
         return new Result(Status.WRITTEN, source, Optional.of(gist), facts);
+    }
+
+    /**
+     * True when memory existed at call start and the store now holds nothing for the key. Only a forget deletes memory,
+     * so this call must not summarize or write. The store is read only for this check, never for the prompt. A
+     * first-time caller (empty snapshot) is not checked: there is nothing to compare, and the store's tombstone drops
+     * the writes of a call in which the farmer asked to be forgotten.
+     */
+    private boolean forgottenSince(CallerKey key, FarmerMemory memoryAtStart) {
+        return !memoryAtStart.isEmpty() && store.load(key).map(FarmerMemory::isEmpty).orElse(true);
     }
 
     /**
