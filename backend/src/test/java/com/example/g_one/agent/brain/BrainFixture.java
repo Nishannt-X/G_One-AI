@@ -2,6 +2,8 @@ package com.example.g_one.agent.brain;
 
 import com.example.g_one.GOneProperties;
 import com.example.g_one.agent.llm.ChatClient;
+import com.example.g_one.agent.llm.ChatReply;
+import com.example.g_one.agent.llm.ChatRequest;
 import com.example.g_one.agent.llm.FallbackLines;
 import com.example.g_one.agent.llm.FixedLines;
 import com.example.g_one.agent.tools.EndCallTool;
@@ -32,6 +34,7 @@ import com.example.g_one.fakes.FakeLeg;
 import com.example.g_one.fakes.FakeLlm;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
@@ -60,6 +63,8 @@ final class BrainFixture implements AutoCloseable {
     final FixedLines lines = new FixedLines(JSON);
     final FallbackLines fallback = new FallbackLines(JSON);
     final Language.Registry registry;
+    final GOneProperties props;
+    final List<Tool> tools;
     final LlmAgentBrain brain;
 
     BrainFixture() throws Exception {
@@ -68,12 +73,12 @@ final class BrainFixture implements AutoCloseable {
 
     BrainFixture(boolean configured) throws Exception {
         llm = new FakeLlm();
-        GOneProperties props = new GOneProperties(List.of("hi-IN:Hindi:Nalini", "en-IN:English:Kaveri"), "",
+        props = new GOneProperties(List.of("hi-IN:Hindi:Nalini", "en-IN:English:Kaveri"), "",
                 new GOneProperties.Agmarknet("http://127.0.0.1:9", "", "", "", "", "", "", 5, 3, 30), null,
                 new GOneProperties.Llm(configured ? llm.baseUrl() : "", FakeLlm.KEY, "fake-model", 5));
         registry = new Language.Registry(props);
         MandiQuote quote = new MandiQuote(new MandiSource(props, JSON), new MandiCatalog(JSON));
-        List<Tool> tools = List.of(
+        tools = List.of(
                 new MandiPriceTool(quote),
                 new SaveProfileFactTool(() -> store, gate, CLOCK),
                 new ForgetMeTool(() -> store, gate, lines, CLOCK),
@@ -83,6 +88,11 @@ final class BrainFixture implements AutoCloseable {
             if (e instanceof ConsoleEvent.ToolCalled t) toolEvents.add(t);
         });
         brain = new LlmAgentBrain(new ChatClient(props, JSON), tools, gate, lines, fallback, registry, bus, JSON, CLOCK);
+    }
+
+    /** A brain on the same tools, store and bus, but with its own model client, clock and turn deadline. */
+    LlmAgentBrain brainWith(ChatClient chat, Clock clock, Duration deadline) {
+        return new LlmAgentBrain(chat, tools, gate, lines, fallback, registry, bus, JSON, clock, deadline);
     }
 
     /** The seed farmer's remembered profile and last gist, also saved in the store. */
@@ -126,6 +136,56 @@ final class BrainFixture implements AutoCloseable {
     @Override
     public void close() {
         llm.close();
+    }
+
+    /** A model client that answers from a script instead of the network, and records what it was asked. */
+    static final class ScriptedChat extends ChatClient {
+        final List<ChatRequest> requests = new CopyOnWriteArrayList<>();
+        private final java.util.function.Function<ChatRequest, ChatReply> script;
+
+        ScriptedChat(GOneProperties props, java.util.function.Function<ChatRequest, ChatReply> script) {
+            super(props, JSON);
+            this.script = script;
+        }
+
+        @Override
+        public ChatReply complete(ChatRequest request) {
+            requests.add(request);
+            return script.apply(request);
+        }
+    }
+
+    /** A clock a test moves by hand. */
+    static final class MovableClock extends Clock {
+        private final java.util.concurrent.atomic.AtomicLong ms;
+
+        MovableClock(long startMs) {
+            ms = new java.util.concurrent.atomic.AtomicLong(startMs);
+        }
+
+        void advance(Duration d) {
+            ms.addAndGet(d.toMillis());
+        }
+
+        @Override
+        public long millis() {
+            return ms.get();
+        }
+
+        @Override
+        public java.time.Instant instant() {
+            return java.time.Instant.ofEpochMilli(ms.get());
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return IST;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return Clock.fixed(instant(), zone);
+        }
     }
 
     /** Counts every write and forget, so a test can prove memory was not touched. */

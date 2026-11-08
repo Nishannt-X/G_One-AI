@@ -1,5 +1,6 @@
 package com.example.g_one.agent.tools.memory;
 
+import com.example.g_one.agent.tools.Redact;
 import com.example.g_one.agent.tools.ToolArgs;
 import com.example.g_one.core.CallContext;
 import com.example.g_one.core.CallerKey;
@@ -13,7 +14,6 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
-import java.util.regex.Pattern;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -21,7 +21,8 @@ import org.springframework.stereotype.Component;
 /**
  * {@code save_profile_fact(field, value)}: saves one stable fact the farmer said about themselves, with provenance
  * "said" and this call's id. Writes nothing (and says so honestly) when memory is off: a withheld caller ID, an
- * unanswered name check, another speaker, or after {@code forget_me}.
+ * unanswered name check, remembered memory with no name to check it with, another speaker, or after
+ * {@code forget_me}. Long numbers (phone, account, Aadhaar, OTP) are refused, never saved.
  *
  * <p>The memory area decides which {@link MemoryStore} is wired; until one is, this tool says memory is unavailable.
  */
@@ -32,8 +33,6 @@ public class SaveProfileFactTool implements Tool {
     public static final List<String> FIELDS =
             List.of("name", "village", "district", "state", "crops", "usualMandi", "language");
     static final int MAX_VALUE_CHARS = 80;
-    /** Six or more digits, even with spaces or dashes between them: a phone, account, Aadhaar or OTP. Never saved. */
-    private static final Pattern LONG_NUMBER = Pattern.compile("\\d(?:[\\s-]?\\d){5,}");
     private static final JsonNode SCHEMA = ToolArgs.schema("""
             {"type": "object",
              "properties": {
@@ -80,13 +79,15 @@ public class SaveProfileFactTool implements Tool {
         if (field.isEmpty() || !FIELDS.contains(field.get())) {
             return ToolResult.error("field must be one of " + String.join(", ", FIELDS) + ".");
         }
-        String value = MemoryBlock.clean(ToolArgs.text(args, "value").orElse(""), Integer.MAX_VALUE);
+        String raw = ToolArgs.text(args, "value").orElse("");
+        // Checked before cleaning, which would hide the digits instead of refusing them.
+        if (Redact.LONG_NUMBER.matcher(raw).find()) {
+            return ToolResult.error("Not saved: never save long numbers such as phone, account, Aadhaar or OTP.");
+        }
+        String value = MemoryBlock.clean(raw, Integer.MAX_VALUE);
         if (value.isEmpty()) return ToolResult.error("value is required.");
         if (value.codePointCount(0, value.length()) > MAX_VALUE_CHARS) {
             return ToolResult.error("value is too long; save a short phrase.");
-        }
-        if (LONG_NUMBER.matcher(value).find()) {
-            return ToolResult.error("Not saved: never save long numbers such as phone, account, Aadhaar or OTP.");
         }
         Optional<CallerKey> key = ctx.callerKey();
         if (key.isEmpty()) {
@@ -107,7 +108,9 @@ public class SaveProfileFactTool implements Tool {
             case OTHER_SPEAKER -> "this is not the remembered farmer, so memory is off for this call.";
             case FORGOTTEN -> "the farmer asked to be forgotten, so memory is off for the rest of this call.";
             case WITHHELD -> "memory is off for this call because the caller ID is withheld.";
-            case NEW, UNNAMED, CONFIRMED -> "memory is off for this call.";
+            case UNNAMED -> "something is remembered for this number but there is no name to check it with, so "
+                    + "nothing is saved on this call.";
+            case NEW, CONFIRMED -> "memory is off for this call.";
         };
     }
 }

@@ -9,30 +9,41 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
  * Whether this call may use and write the farmer's memory, shared by the agent brain and the memory tools. Caller ID is
  * not identity, so a returning farmer's memory is used only after they say yes to the name check (docs/memory.md):
- * until then the brain keeps it out of the prompt and the memory tools refuse to write or delete.
+ * until then the brain keeps it away from the model and the memory tools refuse to write or delete.
  *
- * <p>State is kept per call id. The pipeline should call {@code LlmAgentBrain.callEnded} at hang-up; entries idle for
- * longer than {@link #IDLE_TTL} are dropped anyway, so a missed hang-up cannot leak memory.
+ * <p>State is kept per call id. The pipeline calls {@code LlmAgentBrain.callEnded} at hang-up. A background sweep every
+ * {@link #SWEEP_EVERY} drops calls idle for longer than {@link #IDLE_TTL} (far longer than any phone call), so a missed
+ * hang-up cannot keep state forever. A dropped call id is remembered for {@link #TOMBSTONE_TTL}: if it shows up again
+ * it restarts as {@link State#OTHER_SPEAKER}, never from its loaded memory, so a dropped "forgotten" or "someone else"
+ * state can never turn back into a name check that unlocks memory.
  */
 @Component
-public class MemoryGate {
+public class MemoryGate implements DisposableBean {
     /** A call idle this long is over; its state is dropped on the next sweep. */
     public static final Duration IDLE_TTL = Duration.ofHours(3);
-    private static final long SWEEP_EVERY_MS = Duration.ofMinutes(5).toMillis();
+    /** How long a dropped call id still fails closed. */
+    public static final Duration TOMBSTONE_TTL = Duration.ofHours(24);
+    public static final Duration SWEEP_EVERY = Duration.ofMinutes(10);
 
     public enum State {
         /** First call from this number: nothing is remembered yet. Facts may be saved. */
         NEW,
         /** The caller ID is withheld: memory is off, nothing is loaded or saved. */
         WITHHELD,
-        /** Something is remembered but no name to check it with: it is not used. Facts may be saved. */
+        /**
+         * Something is remembered but there is no name to check it with: it is not used, and since nobody can show
+         * they own it, nothing is saved or deleted on this call.
+         */
         UNNAMED,
         /** A returning farmer was asked the name check and has not answered yet. Memory hidden, no writes. */
         NAME_CHECK,
@@ -43,43 +54,58 @@ public class MemoryGate {
         /** The farmer asked to be forgotten on this call: memory is off for the rest of it. */
         FORGOTTEN;
 
-        /** True when the remembered profile and gists may go into the prompt. */
+        /** True when the remembered profile and gists may go to the model. */
         public boolean usesMemory() {
             return this == CONFIRMED;
         }
 
-        /** True when {@code save_profile_fact} may write. */
+        /** True when {@code save_profile_fact} may write: a first-time caller, or a farmer who passed the name check. */
         public boolean maySave() {
-            return this == NEW || this == UNNAMED || this == CONFIRMED;
+            return this == NEW || this == CONFIRMED;
         }
 
-        /** True when {@code forget_me} may delete: never for an unanswered name check or another speaker. */
+        /** True when {@code forget_me} may delete: never for unowned memory, an unanswered check or another speaker. */
         public boolean mayForget() {
-            return this == NEW || this == UNNAMED || this == CONFIRMED || this == FORGOTTEN;
+            return this == NEW || this == CONFIRMED || this == FORGOTTEN;
         }
     }
 
-    private record Entry(State state, long touchedMs) {}
+    /** {@code heardYes} is the code's reading of the farmer's latest reply while the name check waits. */
+    private record Entry(State state, long touchedMs, boolean heardYes) {}
 
     private final Map<CallId, Entry> calls = new ConcurrentHashMap<>();
-    private final AtomicLong lastSweepMs = new AtomicLong();
+    private final Map<CallId, Long> dropped = new ConcurrentHashMap<>();
     private final Clock clock;
+    private final ScheduledExecutorService sweeper;
 
     @Autowired
     public MemoryGate() {
-        this(Clock.systemUTC());
+        this(Clock.systemUTC(), true);
     }
 
+    /** For tests: no background sweep; call {@link #sweep()} directly. */
     public MemoryGate(Clock clock) {
+        this(clock, false);
+    }
+
+    private MemoryGate(Clock clock, boolean background) {
         this.clock = clock;
+        if (background) {
+            sweeper = Executors.newSingleThreadScheduledExecutor(
+                    Thread.ofPlatform().daemon().name("memory-gate-sweep").factory());
+            long every = SWEEP_EVERY.toMillis();
+            sweeper.scheduleWithFixedDelay(this::sweepQuietly, every, every, TimeUnit.MILLISECONDS);
+        } else {
+            sweeper = null;
+        }
     }
 
     /** The call's state, starting it from the loaded memory the first time the call is seen. */
     public State state(CallContext ctx) {
-        sweep();
         long now = clock.millis();
-        return calls.compute(ctx.callId(), (id, e) ->
-                new Entry(e == null ? initial(ctx.memory()) : e.state(), now)).state();
+        return calls.compute(ctx.callId(), (id, e) -> e == null
+                ? new Entry(dropped.containsKey(id) ? State.OTHER_SPEAKER : initial(ctx.memory()), now, false)
+                : new Entry(e.state(), now, e.heardYes())).state();
     }
 
     /** The call's state if the call is known, without starting it. */
@@ -89,27 +115,47 @@ public class MemoryGate {
     }
 
     /**
-     * Records the answer to the name check. Only an unanswered name check changes; any other state stays as it is.
+     * Records the code's reading of the farmer's own reply ({@link NameCheckReply#isClearYes}) while the name check
+     * waits, before the model is asked. Only this reading can let {@code confirm_name} unlock memory.
+     */
+    public void heardNameCheckReply(CallContext ctx, String farmerText) {
+        state(ctx);
+        boolean yes = NameCheckReply.isClearYes(farmerText);
+        calls.computeIfPresent(ctx.callId(), (id, e) ->
+                e.state() == State.NAME_CHECK ? new Entry(e.state(), clock.millis(), yes) : e);
+    }
+
+    /**
+     * The model's answer to the name check, from {@code confirm_name}. Memory unlocks only when the model says yes
+     * and the farmer's own reply was a clear yes ({@link #heardNameCheckReply}); anything else means someone else.
+     * Only an unanswered name check changes; any other state stays as it is.
      *
      * @return the state afterwards
      */
-    public State answerNameCheck(CallContext ctx, boolean yes) {
+    public State answerNameCheck(CallContext ctx, boolean modelSaysYes) {
         state(ctx);
         long now = clock.millis();
         return calls.compute(ctx.callId(), (id, e) -> {
-            State s = e.state() == State.NAME_CHECK ? (yes ? State.CONFIRMED : State.OTHER_SPEAKER) : e.state();
-            return new Entry(s, now);
+            if (e.state() != State.NAME_CHECK) return new Entry(e.state(), now, false);
+            return new Entry(modelSaysYes && e.heardYes() ? State.CONFIRMED : State.OTHER_SPEAKER, now, false);
         }).state();
+    }
+
+    /** The turn that answered the name check is over: a check still unanswered now counts as someone else. */
+    public void closeNameCheck(CallContext ctx) {
+        calls.computeIfPresent(ctx.callId(), (id, e) -> e.state() == State.NAME_CHECK
+                ? new Entry(State.OTHER_SPEAKER, clock.millis(), false) : e);
     }
 
     /** Memory is off for the rest of the call after {@code forget_me}. */
     public void forgotten(CallContext ctx) {
-        calls.put(ctx.callId(), new Entry(State.FORGOTTEN, clock.millis()));
+        calls.put(ctx.callId(), new Entry(State.FORGOTTEN, clock.millis(), false));
     }
 
     /** Drops the call's state at hang-up. Harmless for an unknown call. */
     public void end(CallId callId) {
-        calls.remove(Objects.requireNonNull(callId, "callId"));
+        Objects.requireNonNull(callId, "callId");
+        if (calls.remove(callId) != null) dropped.put(callId, clock.millis());
     }
 
     /** Where a call starts, from the memory loaded at call start. */
@@ -119,15 +165,35 @@ public class MemoryGate {
         return MemoryBlock.rememberedName(memory).isPresent() ? State.NAME_CHECK : State.UNNAMED;
     }
 
+    /** Drops calls idle longer than {@link #IDLE_TTL} and tombstones older than {@link #TOMBSTONE_TTL}. */
+    public void sweep() {
+        long now = clock.millis();
+        long idleCutoff = now - IDLE_TTL.toMillis();
+        calls.forEach((id, e) -> {
+            if (e.touchedMs() < idleCutoff && calls.remove(id, e)) dropped.put(id, now);
+        });
+        long tombCutoff = now - TOMBSTONE_TTL.toMillis();
+        dropped.entrySet().removeIf(t -> t.getValue() < tombCutoff);
+    }
+
     int size() {
         return calls.size();
     }
 
-    private void sweep() {
-        long now = clock.millis();
-        long last = lastSweepMs.get();
-        if (now - last < SWEEP_EVERY_MS || !lastSweepMs.compareAndSet(last, now)) return;
-        long cutoff = now - IDLE_TTL.toMillis();
-        calls.entrySet().removeIf(e -> e.getValue().touchedMs() < cutoff);
+    int tombstones() {
+        return dropped.size();
+    }
+
+    @Override
+    public void destroy() {
+        if (sweeper != null) sweeper.shutdownNow();
+    }
+
+    private void sweepQuietly() {
+        try {
+            sweep();
+        } catch (RuntimeException e) {
+            // A failed sweep is retried on the next tick; it must never stop the scheduler.
+        }
     }
 }
