@@ -15,6 +15,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -38,8 +39,14 @@ import org.sqlite.SQLiteConfig;
  *
  * <p>Thread safety: one connection, and every public method is {@code synchronized} and runs as one transaction. So
  * each write and each forget is atomic, and a write cannot slip between a forget's delete and its tombstone. Memory
- * traffic is a few reads and writes per call, so one connection is plenty. {@code BEGIN IMMEDIATE} plus a busy timeout
- * keeps a second process on the same file (a second test context, say) safe too.
+ * traffic is a few reads and writes per call, so one connection is plenty.
+ *
+ * <p>The connection stays in autocommit mode between operations and holds no lock while idle. Each write runs in its
+ * own {@code BEGIN IMMEDIATE ... COMMIT} (it takes the write lock up front, so it never fails half-way on a lock
+ * upgrade) and each read in a plain {@code BEGIN ... COMMIT} (one consistent snapshot). With WAL and a busy timeout, a
+ * second store or process on the same file (a second test context, say) just waits its turn. (sqlite-jdbc's own
+ * {@code IMMEDIATE} transaction mode with autocommit off starts the next immediate transaction right after every
+ * commit, so an idle store would keep the write lock and block everyone else.)
  */
 public final class SqliteMemoryStore implements MemoryStore, AutoCloseable {
     public static final String FILE_NAME = "g-one.db";
@@ -89,18 +96,24 @@ public final class SqliteMemoryStore implements MemoryStore, AutoCloseable {
     private final Connection conn;
     private final ObjectMapper json = new ObjectMapper();
 
+    static final String GITIGNORE = "# Farmer memory database (synthetic in this repo, but never committed).\n*\n";
+
     /**
-     * Opens (or creates) {@code <dataDir>/g-one.db} and its schema. A data directory this creates also gets a
-     * {@code .gitignore} of {@code *}, so the database is never committed by accident.
+     * Opens (or creates) {@code <dataDir>/g-one.db} and its schema. The data directory always ends up with a
+     * {@code .gitignore} of {@code *} (written when missing, also for a directory that already existed), so the
+     * database and its {@code -wal}/{@code -shm} files are never committed by accident. The root {@code .gitignore}
+     * also ignores the default {@code backend/data/}.
      */
     public static SqliteMemoryStore open(Path dataDir) {
         Objects.requireNonNull(dataDir, "dataDir");
         try {
-            if (!Files.isDirectory(dataDir)) {
-                Files.createDirectories(dataDir);
-                Files.writeString(dataDir.resolve(".gitignore"),
-                        "# Farmer memory database (synthetic in this repo, but never committed).\n*\n",
-                        StandardCharsets.UTF_8);
+            Files.createDirectories(dataDir);
+            Path ignore = dataDir.resolve(".gitignore");
+            if (!Files.exists(ignore)) {
+                Files.writeString(ignore, GITIGNORE, StandardCharsets.UTF_8);
+            } else if (!ignoresEverything(Files.readString(ignore, StandardCharsets.UTF_8))) {
+                // Keep what is there; just add the catch-all line.
+                Files.writeString(ignore, "\n" + GITIGNORE, StandardCharsets.UTF_8, StandardOpenOption.APPEND);
             }
         } catch (IOException e) {
             throw new UncheckedIOException("Could not create the memory data directory", e);
@@ -108,30 +121,33 @@ public final class SqliteMemoryStore implements MemoryStore, AutoCloseable {
         return new SqliteMemoryStore(dataDir.resolve(FILE_NAME));
     }
 
+    /** True when a line of the ignore file is exactly {@code *}. */
+    private static boolean ignoresEverything(String gitignore) {
+        return gitignore.lines().map(String::strip).anyMatch("*"::equals);
+    }
+
     private SqliteMemoryStore(Path file) {
         SQLiteConfig cfg = new SQLiteConfig();
         cfg.setBusyTimeout(5_000);
         cfg.setJournalMode(SQLiteConfig.JournalMode.WAL);
         cfg.setSynchronous(SQLiteConfig.SynchronousMode.NORMAL);
-        cfg.setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE);
         try {
             conn = cfg.createConnection("jdbc:sqlite:" + file.toAbsolutePath());
-            conn.setAutoCommit(false);
-            try (Statement st = conn.createStatement()) {
-                for (String sql : SCHEMA) {
-                    st.execute(sql);
-                }
-            }
-            conn.commit();
         } catch (SQLException e) {
             throw new IllegalStateException("Could not open the memory database", e);
         }
+        writeTx(() -> {
+            for (String sql : SCHEMA) {
+                exec(sql);
+            }
+            return null;
+        });
     }
 
     @Override
     public synchronized Optional<FarmerMemory> load(CallerKey key) {
         Objects.requireNonNull(key, "key");
-        return tx(() -> {
+        return readTx(() -> {
             List<ProfileFact> facts = facts(key);
             List<CallGist> gists = gists(key);
             if (facts.isEmpty() && gists.isEmpty()) {
@@ -146,7 +162,7 @@ public final class SqliteMemoryStore implements MemoryStore, AutoCloseable {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(gist, "gist");
         String followUps = toJson(gist.followUps());
-        tx(() -> {
+        writeTx(() -> {
             if (covered(key, gist.callId(), gist.startedMs())) {
                 return null;
             }
@@ -175,7 +191,7 @@ public final class SqliteMemoryStore implements MemoryStore, AutoCloseable {
         if (incoming.isEmpty()) {
             return;
         }
-        tx(() -> {
+        writeTx(() -> {
             for (ProfileFact f : incoming) {
                 if (covered(key, f.provenance().callId(), f.provenance().atMs())) {
                     continue;
@@ -196,7 +212,7 @@ public final class SqliteMemoryStore implements MemoryStore, AutoCloseable {
     public synchronized boolean forget(CallerKey key, CallId duringCall, long atMs) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(duringCall, "duringCall");
-        return tx(() -> {
+        return writeTx(() -> {
             int deleted = update("DELETE FROM profile_facts WHERE caller_key = ?", key.value())
                     + update("DELETE FROM call_gists WHERE caller_key = ?", key.value());
             update("INSERT OR IGNORE INTO forget_calls (caller_key, call_id) VALUES (?, ?)",
@@ -231,25 +247,46 @@ public final class SqliteMemoryStore implements MemoryStore, AutoCloseable {
         return incoming.provenance().atMs() >= stored.provenance().atMs();
     }
 
-    // --- helpers; all run inside tx() on the connection's thread-confined transaction ---
+    // --- helpers; all run inside writeTx() or readTx(), under the store's monitor ---
 
     private interface Work<T> {
         T run() throws SQLException;
     }
 
-    private <T> T tx(Work<T> work) {
+    /** A write: takes the write lock up front ({@code BEGIN IMMEDIATE}) and releases it at commit or rollback. */
+    private <T> T writeTx(Work<T> work) {
+        return tx("BEGIN IMMEDIATE", work);
+    }
+
+    /** A read: one snapshot, no write lock. */
+    private <T> T readTx(Work<T> work) {
+        return tx("BEGIN", work);
+    }
+
+    private <T> T tx(String begin, Work<T> work) {
+        boolean begun = false;
         try {
+            exec(begin);
+            begun = true;
             T result = work.run();
-            conn.commit();
+            exec("COMMIT");
             return result;
         } catch (SQLException | RuntimeException e) {
-            try {
-                conn.rollback();
-            } catch (SQLException rollback) {
-                e.addSuppressed(rollback);
+            if (begun) {
+                try {
+                    exec("ROLLBACK");
+                } catch (SQLException rollback) {
+                    e.addSuppressed(rollback);
+                }
             }
             // The message never carries the key or the data.
             throw new IllegalStateException("Memory store operation failed", e);
+        }
+    }
+
+    private void exec(String sql) throws SQLException {
+        try (Statement st = conn.createStatement()) {
+            st.execute(sql);
         }
     }
 

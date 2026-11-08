@@ -36,6 +36,11 @@ import org.slf4j.LoggerFactory;
  * When the summarizer is unavailable or fails twice, a template gist is written instead: "Call {date}: {crop},
  * outcome {outcome}."
  *
+ * <p>The name-check result arrives as {@link CallTranscript#otherSpeaker()}: the call pipeline (#23) sets it to true
+ * when the caller did not confirm the stored name. Then the stored memory is never read: the summarizer gets an empty
+ * profile and no earlier follow-ups, the template gist names no stored crop, no profile fact is written, and the gist
+ * is flagged with {@value #OTHER_SPEAKER_PREFIX}.
+ *
  * <p>Nothing is read or written when the caller ID is withheld ({@link FarmerMemory#withheld}). After a
  * {@code forget_me}, the store's tombstone drops this call's writes. Deals are not written here: the confirmation
  * state machine writes them.
@@ -85,7 +90,11 @@ public final class GistWriter implements AutoCloseable {
             return Result.WITHHELD;
         }
         CallerKey key = memoryAtStart.callerKey().orElseThrow();
-        FarmerMemory current = store.load(key).orElse(FarmerMemory.empty(key));
+        // A failed name check means someone else spoke: they must not hear (via the summarizer) or get written into
+        // the gist anything from the farmer's memory, so the prompt and the template both see an empty memory.
+        FarmerMemory current = transcript.otherSpeaker()
+                ? FarmerMemory.empty(key)
+                : store.load(key).orElse(FarmerMemory.empty(key));
         CallTranscript scrubbed = scrubbed(transcript);
 
         Optional<CallSummarizer.Draft> draft = draft(scrubbed, current);

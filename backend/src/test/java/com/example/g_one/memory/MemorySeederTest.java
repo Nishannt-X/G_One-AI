@@ -17,7 +17,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -88,6 +87,46 @@ class MemorySeederTest {
         assertThat(m.fact("district")).contains(newer);
         assertThat(m.gists()).first().isEqualTo(later);
         assertThat(m.gists()).hasSize(3);
+    }
+
+    @Test
+    void reseedingNeverUndoesLaterEditsToSeededGistsOrFacts() {
+        MemorySeeder.seed(store, bundledSeed(), ENV::get, SALT);
+        CallerKey key = CallerKey.fromPhone(PHONE, FakeLeg.SALT);
+        CallGist seeded = store.load(key).orElseThrow().gists().get(0);
+        // Later: the follow-up is marked done (the gist is rewritten without it) and the farmer corrects the village.
+        CallGist edited = new CallGist(seeded.callId(), seeded.startedMs(), seeded.endedMs(), seeded.summary(),
+                List.of());
+        store.saveGist(key, edited);
+        ProfileFact village = store.load(key).orElseThrow().fact("village").orElseThrow();
+        ProfileFact corrected = new ProfileFact("village", "Vinchur",
+                Provenance.said(CallId.of("c-1108"), village.provenance().atMs() + 1_000));
+        store.upsertFacts(key, List.of(corrected));
+        assertThat(store.load(key).orElseThrow().fact("village")).contains(corrected);
+
+        MemorySeeder.Result again = MemorySeeder.seed(store, bundledSeed(), ENV::get, SALT);
+
+        assertThat(again.facts()).isZero();
+        assertThat(again.gists()).isZero();
+        FarmerMemory m = store.load(key).orElseThrow();
+        assertThat(m.gists().get(0)).isEqualTo(edited);
+        assertThat(m.fact("village")).contains(corrected);
+    }
+
+    @Test
+    void aSeedFillsOnlyWhatIsMissing() {
+        CallerKey key = CallerKey.fromPhone(PHONE, FakeLeg.SALT);
+        MemorySeeder.seed(store, bundledSeed(), ENV::get, SALT);
+        FarmerMemory full = store.load(key).orElseThrow();
+        MemoryStore partial = new InMemoryMemoryStore();
+        partial.upsertFacts(key, List.of(full.fact("name").orElseThrow()));
+        partial.saveGist(key, full.gists().get(1));
+
+        MemorySeeder.Result r = MemorySeeder.seed(partial, bundledSeed(), ENV::get, SALT);
+
+        assertThat(r.facts()).isEqualTo(full.facts().size() - 1);
+        assertThat(r.gists()).isEqualTo(1);
+        assertThat(partial.load(key).orElseThrow().gists()).containsExactlyElementsOf(full.gists());
     }
 
     @Test

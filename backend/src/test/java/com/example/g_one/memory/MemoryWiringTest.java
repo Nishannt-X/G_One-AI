@@ -14,13 +14,18 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 /**
  * The default wiring end to end: SQLite store in a temp data dir, the bundled seed loaded at startup under the key of a
- * synthetic number from the environment, and the console endpoint showing it (no access code set: local dev).
+ * synthetic number from the environment, and the console endpoint showing it (no access code, dev-open, a direct
+ * loopback request).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @DirtiesContext // close the SQLite file before the temp dir is deleted (Windows cannot delete an open file)
@@ -37,6 +42,7 @@ class MemoryWiringTest {
         r.add("g-one.memory.seed-file", () -> "classpath:memory/seed-suresh.json");
         r.add("g-one.memory.hmac-key", () -> Base64.getEncoder().encodeToString(FakeLeg.SALT));
         r.add("g-one.memory.access-code", () -> "");
+        r.add("g-one.memory.dev-open", () -> "true");
         r.add("G_ONE_DEMO_FARMER_PHONE", () -> PHONE);
     }
 
@@ -57,5 +63,18 @@ class MemoryWiringTest {
         assertThat(body.path("facts").toString()).contains("Suresh", "Lasalgaon APMC", "crop:red onion");
         assertThat(body.path("gists").get(0).path("callId").asText()).isEqualTo("c-1103");
         assertThat(body.toString()).doesNotContain(PHONE).doesNotContain("5005550006");
+    }
+
+    @Test
+    void aSpoofedForwardedForThroughSpringsForwardedHeaderSupportIsStillRefused() {
+        CallerKey key = CallerKey.fromPhone(PHONE, FakeLeg.SALT);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Forwarded-For", "127.0.0.1");
+
+        ResponseEntity<String> res = http.exchange("/api/memory/" + key.value(), HttpMethod.GET,
+                new HttpEntity<>(headers), String.class);
+
+        assertThat(res.getStatusCode().value()).isEqualTo(403);
+        assertThat(res.getBody()).doesNotContain("Suresh");
     }
 }

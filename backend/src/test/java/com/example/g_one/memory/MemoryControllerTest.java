@@ -12,6 +12,7 @@ import com.example.g_one.core.Provenance;
 import com.example.g_one.fakes.FakeLeg;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,8 +22,9 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
 
-/** The console memory endpoint behind {@code G_ONE_ACCESS_CODE}, on the in-memory store. Synthetic data only. */
+/** The console memory endpoint: behind {@code G_ONE_ACCESS_CODE}, closed without it. Synthetic data only. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
     "g-one.memory.store=in-memory",
     "g-one.memory.access-code=test-access-code-not-a-secret",
@@ -101,15 +103,74 @@ class MemoryControllerTest {
         assertThat(bad.getBody()).doesNotContain("15005550006");
     }
 
-    @Test
-    void withNoAccessCodeConfiguredTheCheckIsOff() {
+    private static MemoryController controller(String accessCode, boolean devOpen) {
         MemoryStore local = new InMemoryMemoryStore();
         local.upsertFacts(SURESH, List.of(new ProfileFact("name", "Suresh", Provenance.said(CallId.of("c-1"), 1))));
-        MemoryController open = new MemoryController(local, new MemoryProperties("in-memory", null, null, null, ""));
+        return new MemoryController(local, new MemoryProperties("in-memory", null, null, null, accessCode, devOpen));
+    }
 
-        ResponseEntity<?> res = open.memory(SURESH.value(), null);
+    private static MockHttpServletRequest from(String remoteAddr) {
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/memory/" + SURESH.value());
+        req.setRemoteAddr(remoteAddr);
+        return req;
+    }
 
-        assertThat(res.getStatusCode().value()).isEqualTo(200);
-        assertThat(((MemoryController.MemoryView) res.getBody()).facts()).hasSize(1);
+    @Test
+    void withNoAccessCodeTheEndpointIsClosedEvenFromLoopback() {
+        ResponseEntity<?> res = controller("", false).memory(SURESH.value(), null, from("127.0.0.1"));
+
+        assertThat(res.getStatusCode().value()).isEqualTo(403);
+        assertThat(res.getBody().toString()).doesNotContain("Suresh");
+    }
+
+    @Test
+    void devOpenServesOnlyDirectLoopbackRequests() {
+        MemoryController open = controller("", true);
+
+        for (String peer : new String[] {"127.0.0.1", "0:0:0:0:0:0:0:1", "[::1]"}) {
+            ResponseEntity<?> res = open.memory(SURESH.value(), null, from(peer));
+            assertThat(res.getStatusCode().value()).as("peer %s", peer).isEqualTo(200);
+            assertThat(((MemoryController.MemoryView) res.getBody()).facts()).hasSize(1);
+        }
+        for (String peer : new String[] {"203.0.113.7", "10.0.0.2", "localhost", ""}) {
+            assertThat(open.memory(SURESH.value(), null, from(peer)).getStatusCode().value())
+                    .as("peer %s", peer).isEqualTo(403);
+        }
+    }
+
+    @Test
+    void devOpenStaysClosedThroughATunnelOrProxy() {
+        MemoryController open = controller("", true);
+
+        for (String header : new String[] {"X-Forwarded-For", "Forwarded", "X-Forwarded-Host", "X-Real-IP",
+                "CF-Connecting-IP"}) {
+            MockHttpServletRequest req = from("127.0.0.1");
+            req.addHeader(header, "127.0.0.1");
+            assertThat(open.memory(SURESH.value(), null, req).getStatusCode().value())
+                    .as("header %s", header).isEqualTo(403);
+        }
+    }
+
+    @Test
+    void theLoopbackCheckReadsTheContainerRequestBelowAnyWrapper() {
+        MockHttpServletRequest raw = from("203.0.113.7");
+        HttpServletRequestWrapper rewritten = new HttpServletRequestWrapper(raw) {
+            @Override
+            public String getRemoteAddr() {
+                return "127.0.0.1"; // what a spoofed X-Forwarded-For would make the forwarded-header wrapper say
+            }
+        };
+
+        assertThat(MemoryController.directLoopback(rewritten)).isFalse();
+        assertThat(controller("", true).memory(SURESH.value(), null, rewritten).getStatusCode().value())
+                .isEqualTo(403);
+    }
+
+    @Test
+    void anAccessCodeWinsOverDevOpen() {
+        MemoryController coded = controller(CODE, true);
+
+        assertThat(coded.memory(SURESH.value(), null, from("127.0.0.1")).getStatusCode().value()).isEqualTo(401);
+        assertThat(coded.memory(SURESH.value(), CODE, from("203.0.113.7")).getStatusCode().value()).isEqualTo(200);
     }
 }

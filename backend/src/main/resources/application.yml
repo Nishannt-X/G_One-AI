@@ -52,5 +52,7 @@ g-one:
     hmac-key: ${G_ONE_MEMORY_HMAC_KEY:}
     # Optional synthetic seed: a file path, or classpath:memory/seed-suresh.json for the bundled demo farmer.
     seed-file: ${G_ONE_MEMORY_SEED_FILE:}
-    # Required as the X-Access-Code header on /api/memory/**. Blank = no check (local dev only).
+    # Required as the X-Access-Code header on /api/memory/**. Blank = the endpoint is closed (403) unless dev-open.
     access-code: ${G_ONE_ACCESS_CODE:}
+    # Local dev only: with no access code, serve /api/memory/** to direct loopback requests (never via a tunnel).
+    dev-open: ${G_ONE_MEMORY_DEV_OPEN:false}

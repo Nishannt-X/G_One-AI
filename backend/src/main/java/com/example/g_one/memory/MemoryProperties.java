@@ -14,10 +14,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param dataDir directory that holds {@code g-one.db}
  * @param hmacKey base64 of the HMAC key used to turn a phone number into a {@link CallerKey}
  * @param seedFile optional synthetic seed file: a path, or {@code classpath:...}
- * @param accessCode required in the {@code X-Access-Code} header for {@code /api/memory/**}; blank turns the check off
+ * @param accessCode required in the {@code X-Access-Code} header for {@code /api/memory/**}; blank closes the endpoint
+ *     (fails closed) unless {@code devOpen} is set
+ * @param devOpen local development only: with no access code, serve {@code /api/memory/**} to direct loopback
+ *     requests (never through a proxy or tunnel). Ignored when an access code is set.
  */
 @ConfigurationProperties("g-one.memory")
-public record MemoryProperties(String store, String dataDir, String hmacKey, String seedFile, String accessCode) {
+public record MemoryProperties(String store, String dataDir, String hmacKey, String seedFile, String accessCode,
+                               boolean devOpen) {
 
     public MemoryProperties {
         store = blankTo(store, "sqlite").toLowerCase(Locale.ROOT);
@@ -58,7 +62,8 @@ public record MemoryProperties(String store, String dataDir, String hmacKey, Str
 
     @Override
     public String toString() {
-        return "MemoryProperties[store=" + store + ", dataDir=" + dataDir + ", seedFile=" + seedFile + "]";
+        return "MemoryProperties[store=" + store + ", dataDir=" + dataDir + ", seedFile=" + seedFile + ", devOpen="
+                + devOpen + "]";
     }
 
     private static String blankTo(String value, String fallback) {

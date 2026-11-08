@@ -11,6 +11,7 @@ import com.example.g_one.core.Provenance;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
@@ -108,5 +109,51 @@ class SqliteMemoryStoreTest extends MemoryStoreContract {
 
         assertThat(dir.resolve(SqliteMemoryStore.FILE_NAME)).exists();
         assertThat(Files.readString(dir.resolve(".gitignore"))).contains("*");
+    }
+
+    @Test
+    void anExistingDataDirectoryWithoutAGitignoreGetsOne() throws Exception {
+        Path dir = Files.createDirectories(tmp.resolve("existing"));
+        try (SqliteMemoryStore s = SqliteMemoryStore.open(dir)) {
+            assertThat(s.load(SURESH)).isEmpty();
+        }
+
+        assertThat(Files.readString(dir.resolve(".gitignore")).lines()).contains("*");
+    }
+
+    @Test
+    void anExistingGitignoreWithoutTheCatchAllKeepsItsLinesAndGainsIt() throws Exception {
+        Path dir = Files.createDirectories(tmp.resolve("partial"));
+        Files.writeString(dir.resolve(".gitignore"), "notes.txt\n");
+        try (SqliteMemoryStore s = SqliteMemoryStore.open(dir)) {
+            assertThat(s.load(SURESH)).isEmpty();
+        }
+        String once = Files.readString(dir.resolve(".gitignore"));
+        assertThat(once.lines()).contains("notes.txt", "*");
+
+        SqliteMemoryStore.open(dir).close();
+        assertThat(Files.readString(dir.resolve(".gitignore"))).as("added only once").isEqualTo(once);
+    }
+
+    @Test
+    void twoStoresOnTheSameFileTakeTurnsWithoutHoldingTheLockWhileIdle() {
+        Path dir = tmp.resolve("shared");
+        long started = System.nanoTime();
+        try (SqliteMemoryStore a = SqliteMemoryStore.open(dir); SqliteMemoryStore b = SqliteMemoryStore.open(dir)) {
+            for (int i = 0; i < 5; i++) {
+                a.saveGist(SURESH, gist(CallId.of("a-" + i), i, "From A " + i));
+                b.saveGist(SURESH, gist(CallId.of("b-" + i), i, "From B " + i));
+                b.upsertFacts(OTHER, List.of(new ProfileFact("name", "B" + i,
+                        Provenance.said(CallId.of("b-" + i), i))));
+                a.upsertFacts(OTHER, List.of(new ProfileFact("village", "A" + i,
+                        Provenance.said(CallId.of("a-" + i), i))));
+            }
+            assertThat(a.load(SURESH).orElseThrow().gists()).hasSize(10);
+            assertThat(b.load(OTHER).orElseThrow().facts()).hasSize(2);
+            assertThat(b.forget(SURESH, CallId.of("b-9"), 100)).isTrue();
+            assertThat(a.load(SURESH)).isEmpty();
+        }
+        // An idle store holding the write lock would make every write of the other wait out the 5 s busy timeout.
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(4));
     }
 }

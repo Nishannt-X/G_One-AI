@@ -3,6 +3,7 @@ package com.example.g_one.memory;
 import com.example.g_one.core.CallGist;
 import com.example.g_one.core.CallId;
 import com.example.g_one.core.CallerKey;
+import com.example.g_one.core.FarmerMemory;
 import com.example.g_one.core.MemoryStore;
 import com.example.g_one.core.ProfileFact;
 import com.example.g_one.core.Provenance;
@@ -13,18 +14,21 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Loads the synthetic demo farmer from a seed file in the docs/memory.md "Demo seed farmer" format. The file never holds
  * a phone number: {@code phoneEnvKey} names the env var that does, and only the {@link CallerKey} made from it is
  * stored.
  *
- * <p>Seeding is idempotent: gists replace their own call id and an equal fact replaces itself, so running it on every
- * start changes nothing after the first time, and a newer fact from a real call is never overwritten by the seed's
- * older one. A farmer who said "forget me" stays forgotten: the store's tombstone drops the seed's older writes. To
- * reseed before a recording, delete {@code g-one.db} first.
+ * <p>Seeding only fills gaps: a seed gist is inserted only when no gist with its call id is stored, and a seed fact
+ * only when its field is not stored. So running it on every start never undoes a later edit (a follow-up marked done, a
+ * corrected village), and a newer fact from a real call is never overwritten by the seed's older one. A farmer who
+ * said "forget me" stays forgotten: the store's tombstone drops the seed's older writes. To reseed before a recording,
+ * delete {@code g-one.db} first.
  *
  * <p>Profile timestamps ({@code noticeGivenAt}, {@code createdAt}, {@code updatedAt}) and {@code deals} have no place
  * in the {@link MemoryStore} contract yet and are skipped.
@@ -32,6 +36,7 @@ import java.util.regex.Pattern;
 public final class MemorySeeder {
     public enum Status { SEEDED, SKIPPED_NO_PHONE, SKIPPED_NO_HMAC_KEY }
 
+    /** {@code facts} and {@code gists} count what this run handed to the store (absent before it). */
     public record Result(Status status, int facts, int gists) {}
 
     private static final Pattern ENV_NAME = Pattern.compile("[A-Z][A-Z0-9_]*");
@@ -68,9 +73,14 @@ public final class MemorySeeder {
             // CallerKey's message never contains the number.
             throw new IllegalStateException("Seed phone " + envKey + ": " + e.getMessage());
         }
-        store.upsertFacts(key, facts);
-        gists.forEach(g -> store.saveGist(key, g));
-        return new Result(Status.SEEDED, facts.size(), gists.size());
+        FarmerMemory stored = store.load(key).orElse(FarmerMemory.empty(key));
+        Set<String> storedFields = stored.facts().stream().map(ProfileFact::field).collect(Collectors.toSet());
+        Set<CallId> storedCalls = stored.gists().stream().map(CallGist::callId).collect(Collectors.toSet());
+        List<ProfileFact> newFacts = facts.stream().filter(f -> !storedFields.contains(f.field())).toList();
+        List<CallGist> newGists = gists.stream().filter(g -> !storedCalls.contains(g.callId())).toList();
+        store.upsertFacts(key, newFacts);
+        newGists.forEach(g -> store.saveGist(key, g));
+        return new Result(Status.SEEDED, newFacts.size(), newGists.size());
     }
 
     private static List<ProfileFact> facts(JsonNode profile) {

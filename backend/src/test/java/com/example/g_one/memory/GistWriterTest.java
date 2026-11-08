@@ -262,6 +262,34 @@ class GistWriterTest {
     }
 
     @Test
+    void anotherSpeakerNeverSeesTheFarmersProfileOrFollowUps() throws Exception {
+        store.saveGist(SURESH, new CallGist(CallId.of("c-1103"), START - DAY, START - DAY + 60_000,
+                "Suresh asked about red onion.", List.of("Find a buyer for Suresh's red onion")));
+        llmAnswers(Map.of("gist", "Someone asked about onion prices.", "followUps", List.of(),
+                "profileUpdates", List.of()));
+
+        writer.write(FarmerMemory.empty(SURESH), transcript("Nahin, main Ramesh hoon").withOtherSpeaker(true));
+
+        String user = llm.requests().get(0).path("messages").path(1).path("content").asText();
+        assertThat(user).doesNotContain("Nashik").doesNotContain("red onion").doesNotContain("Find a buyer")
+                .doesNotContain("said");
+        assertThat(JSON.readTree(user).path("profile").isEmpty()).as("empty profile sent").isTrue();
+    }
+
+    @Test
+    void anotherSpeakersTemplateGistNamesNoStoredCrop() {
+        llm.failures.set(2);
+
+        GistWriter.Result r = writer.write(FarmerMemory.empty(SURESH),
+                transcript("Red onion ka bhaav kya hai?").withOtherSpeaker(true));
+
+        assertThat(r.source()).isEqualTo(GistWriter.Source.TEMPLATE);
+        assertThat(memory().gists().get(0).summary())
+                .isEqualTo(GistWriter.OTHER_SPEAKER_PREFIX + "Call 2026-11-08: outcome not recorded.");
+        assertThat(memory().facts()).containsExactly(SAID_DISTRICT, SAID_CROP);
+    }
+
+    @Test
     void writeAsyncRunsInTheBackground() throws Exception {
         llmAnswers(Map.of("gist", "Async gist.", "followUps", List.of(), "profileUpdates", List.of()));
 
