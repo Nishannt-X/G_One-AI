@@ -71,7 +71,11 @@ public class ForgetMeTool implements Tool {
             return ToolResult.error("Nothing to delete: the caller ID is withheld, so nothing about this call is "
                     + "remembered. Tell the farmer that plainly.");
         }
-        MemoryGate.State state = gate.state(ctx);
+        MemoryStore s = store.get();
+        // The call is marked FORGOTTEN before the store deletes anything, so a hang-up that arrives while the
+        // deletion is still running already sees FORGOTTEN and sends nothing to the summarizer. If the deletion then
+        // fails, the call stays FORGOTTEN: memory stays off for it, which fails closed.
+        MemoryGate.State state = s == null ? gate.state(ctx) : gate.beginForget(ctx);
         if (state == MemoryGate.State.NAME_CHECK) {
             return ToolResult.error("Not deleted: first ask the farmer to answer whether they are the person named in "
                     + "the greeting.");
@@ -80,10 +84,8 @@ public class ForgetMeTool implements Tool {
             return ToolResult.error("Not deleted: this is not the remembered farmer, so their request cannot delete "
                     + "that farmer's memory. Nothing from this call is saved.");
         }
-        MemoryStore s = store.get();
         if (s == null) return ToolResult.error("Not deleted: memory is not available right now. Offer to try later.");
         boolean had = s.forget(key.get(), ctx.callId(), clock.millis());
-        gate.forgotten(ctx);
         String line = lines.forLanguage(ctx.language().code()).forgotten();
         return ToolResult.ok((had ? "Deleted everything remembered about this farmer."
                 : "Nothing was stored about this farmer.")

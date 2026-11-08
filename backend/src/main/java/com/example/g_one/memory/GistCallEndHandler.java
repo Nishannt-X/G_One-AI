@@ -36,6 +36,10 @@ import org.springframework.stereotype.Component;
  * {@code FORGOTTEN} or {@code OTHER_SPEAKER} answer would be lost. {@link GistWriter} also writes nothing when the
  * memory loaded at call start is gone from the store (a forget happened during the call).
  *
+ * <p>A hang-up can arrive while {@code forget_me} is still running. The tool marks the call {@code FORGOTTEN}
+ * ({@link MemoryGate#beginForget}) before the store deletes anything, so a forget that has started but not finished
+ * already reads as {@code FORGOTTEN} here, and the call's transcript never reaches the summarizer.
+ *
  * <p>The writer is given only the memory snapshot loaded at call start ({@code CallContext.memory()}), the one the
  * name check was asked about; it never reloads the profile for the summarizer.
  *
