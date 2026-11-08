@@ -28,12 +28,15 @@ function Entry({ item, call, role }: { item: TimelineItem; call: CallView; role:
   const when = offset(item.atMs, call.startedMs)
   if (item.kind === 'whisper') {
     return (
-      <li className="rounded-xl border-2 border-dashed border-amber-700 bg-amber-100 p-4 text-amber-950 dark:border-amber-300 dark:bg-amber-950 dark:text-amber-50">
-        <p className="flex items-center gap-2 text-base font-extrabold uppercase tracking-wide">
-          <LockIcon />
-          <span>Private whisper to the farmer · {WHISPER_LABEL[item.whisperKind]}</span>
+      <li className="rounded-xl border-4 border-dashed border-amber-700 bg-amber-100 p-4 text-amber-950 dark:border-amber-300 dark:bg-amber-950 dark:text-amber-50">
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-base font-extrabold uppercase tracking-wide">
+          <span className="inline-flex items-center gap-2 rounded-full bg-amber-900 px-3 py-1 text-white dark:bg-amber-200 dark:text-amber-950">
+            <LockIcon />
+            Farmer only
+          </span>
+          <span>Private whisper · {WHISPER_LABEL[item.whisperKind]}</span>
         </p>
-        <p className="mt-1 text-sm font-semibold">Only the farmer hears this. The buyer does not. {when}</p>
+        <p className="mt-2 text-sm font-semibold">The buyer does not hear this and does not see it. {when}</p>
         <p lang={item.language} className="mt-2 text-xl leading-snug md:text-2xl">{item.text}</p>
       </li>
     )
@@ -49,6 +52,24 @@ function Entry({ item, call, role }: { item: TimelineItem; call: CallView; role:
     )
   }
   const translation = call.translations[translationKey(item.legId, item.startedMs)]
+  if (item.role !== role) {
+    // The other side spoke: show what this leg hears (the translation), with the original underneath.
+    const heard = translation && translation.toRole === role ? translation : null
+    return (
+      <li className="rounded-xl border-2 border-dashed border-slate-400 p-3 dark:border-slate-500">
+        <p className={`text-base font-extrabold ${ACCENT[item.role].label}`}>
+          Heard from the {item.role}
+          {heard ? ` · translated to ${languageLabel(heard.toLanguage)}` : ' · translation pending'}{' '}
+          <span className="font-semibold text-slate-700 dark:text-slate-300">{when}</span>
+        </p>
+        {heard && <p lang={heard.toLanguage} className="mt-1 text-xl leading-snug md:text-2xl">{heard.text}</p>}
+        <div className="mt-2 rounded-lg bg-slate-100 p-3 dark:bg-slate-800">
+          <p className="text-sm font-bold uppercase tracking-wide text-slate-700 dark:text-slate-300">Original · {languageLabel(item.language)}</p>
+          <p lang={item.language} className="mt-1 text-lg leading-snug md:text-xl">{item.text}</p>
+        </div>
+      </li>
+    )
+  }
   return (
     <li className={`border-l-8 py-1 pl-4 ${ACCENT[role].border}`}>
       <p className={`text-base font-extrabold capitalize ${ACCENT[role].label}`}>
@@ -58,7 +79,7 @@ function Entry({ item, call, role }: { item: TimelineItem; call: CallView; role:
       {translation && (
         <div className="mt-2 rounded-lg bg-slate-100 p-3 dark:bg-slate-800">
           <p className="text-sm font-bold uppercase tracking-wide text-slate-700 dark:text-slate-300">
-            Translated for the {translation.toRole} · {languageLabel(translation.toLanguage)}
+            Sent to the {translation.toRole} as {languageLabel(translation.toLanguage)}
           </p>
           <p lang={translation.toLanguage} className="mt-1 text-lg leading-snug md:text-xl">{translation.text}</p>
         </div>
@@ -70,7 +91,8 @@ function Entry({ item, call, role }: { item: TimelineItem; call: CallView; role:
 /** One leg's transcript: what the person said with its translation, the assistant's lines to them, and (farmer only) private whispers. */
 export default function Lane({ call, role }: { call: CallView; role: LegRole }) {
   const leg = legByRole(call, role)
-  const items = call.items.filter((item) => (item.kind === 'whisper' ? role === 'farmer' : item.role === role))
+  // Own turns, the assistant's lines to this leg, and the other side's turns as this leg hears them. Whispers only on the farmer leg.
+  const items = call.items.filter((item) => (item.kind === 'whisper' ? role === 'farmer' : item.kind === 'turn' || item.role === role))
   const { ref, onScroll } = useStickToBottom(items.length)
   const title = role === 'farmer' ? 'Farmer leg' : 'Buyer leg'
   return (
@@ -95,6 +117,9 @@ export default function Lane({ call, role }: { call: CallView; role: LegRole }) 
           </ul>
         )}
       </div>
+      <p className="mt-3 text-sm font-semibold text-slate-700 dark:text-slate-300">
+        {role === 'farmer' ? 'Amber boxes are private whispers: only the farmer hears them.' : 'Private whispers to the farmer are never shown or spoken on this leg.'}
+      </p>
     </Panel>
   )
 }
