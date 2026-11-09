@@ -26,12 +26,14 @@ import com.example.g_one.core.Turn;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -43,7 +45,16 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Runs each farmer leg end to end: load memory, greet, listen, think, speak, stop for barge-in, and hand the transcript
- * to the {@link CallEndHandler}s at hang-up. Buyer legs are ignored until mediation (Phase 2).
+ * to the {@link CallEndHandler}s at hang-up.
+ *
+ * <p>Mediation hook (#26): when a buyer leg joins a call whose farmer leg is live and a {@link Mediation} is set
+ * ({@link #useMediation}), the farmer leg stops speaking, drops any reply on the way, and hands both legs to the
+ * mediation. From then on the farmer's speech-to-text events go to the mediation instead of the brain, so nothing said
+ * during mediation reaches the brain or its tools, and those turns are not added to the transcript the end handlers
+ * get. When the mediation reports that it ended (the buyer hung up or declined), the farmer leg goes back to the
+ * brain. Each utterance is bound to the mode at its speech start: one that started during mediation is dropped if its
+ * final transcript arrives after mediation ended, so it never reaches the brain or its tools. Without a mediation,
+ * buyer legs are ignored.
  *
  * <p>How one farmer leg works:
  * <ol>
@@ -137,6 +148,21 @@ public final class CallPipeline {
     private final long heldReplyReleaseMs;
     private final Function<Language, String> fixedGoodbyes;
     private final Delays delays;
+    /** Set before {@link #attach}; null means buyer legs are ignored. */
+    private volatile Mediation mediation;
+    /** Live farmer legs by call, so a buyer leg can find its farmer. */
+    private final Map<CallId, FarmerLeg> farmers = new ConcurrentHashMap<>();
+
+    /** Takes over a call's two legs while a farmer and a buyer talk through the assistant (#26). */
+    public interface Mediation {
+        /**
+         * Starts mediating. Called on the farmer leg's actor, so it must return quickly.
+         *
+         * @param onEnded run once when mediation ends for any reason; the farmer leg then goes back to the brain
+         * @return the listener that receives the farmer's speech-to-text events while mediation lasts
+         */
+        SttListener start(Leg farmer, Leg buyer, Runnable onEnded);
+    }
 
     /**
      * A pipeline with the {@link #DEFAULT_GOODBYE_GRACE}, the {@link #DEFAULT_HELD_REPLY_RELEASE} and the
@@ -192,6 +218,11 @@ public final class CallPipeline {
                 .execute(task);
     }
 
+    /** Hands buyer legs to {@code mediation} from now on (#26). */
+    public void useMediation(Mediation mediation) {
+        this.mediation = Objects.requireNonNull(mediation, "mediation");
+    }
+
     /** Starts handling every leg the registry announces from now on. */
     public void attach(LegRegistry registry) {
         registry.onLegAdded(this::onLegAdded);
@@ -200,7 +231,12 @@ public final class CallPipeline {
     /** Handles one new leg. Returns quickly; the slow work runs on the executor. */
     void onLegAdded(Leg leg) {
         if (leg.role() != LegRole.FARMER) {
-            log.info("Ignoring {} leg {} of call {}: mediation is not built yet", leg.role().wire(), leg.id(),
+            FarmerLeg farmer = farmers.get(leg.callId());
+            if (leg.role() == LegRole.BUYER && farmer != null && mediation != null) {
+                farmer.mediateWith(leg);
+                return;
+            }
+            log.info("Ignoring {} leg {} of call {}: no live farmer leg or no mediation", leg.role().wire(), leg.id(),
                     leg.callId());
             return;
         }
@@ -270,6 +306,15 @@ public final class CallPipeline {
         private SttSession session;
         /** What the assistant is saying right now; null while it is silent. Never set while {@link #hold} is. */
         private Utterance speaking;
+        /** Receives the farmer's speech-to-text events while mediation runs; null otherwise. */
+        private SttListener mediating;
+        /**
+         * True when the farmer's current utterance started while mediation ran. Its final turn never reaches the brain,
+         * even when speech-to-text finishes it after mediation ended (the buyer hung up mid-sentence).
+         */
+        private boolean utteranceInMediation;
+        /** When mediation last ended (pipeline clock); a turn that started before this is a mediation turn. */
+        private long mediationEndedMs = Long.MIN_VALUE;
 
         FarmerLeg(Leg leg) {
             this.leg = leg;
@@ -279,9 +324,50 @@ public final class CallPipeline {
         }
 
         void begin() {
+            farmers.put(callId, this);
             mailbox.post(this::joined);
             leg.onEnded(() -> mailbox.post(() -> finish("hangup")));
             leg.onAudio(this::onAudio);
+        }
+
+        // ---- mediation hook (#26) ----
+
+        void mediateWith(Leg buyer) {
+            mailbox.post(() -> startMediation(buyer));
+        }
+
+        /**
+         * In the mailbox: stop speaking, drop any reply or greeting on the way (the generation moves on), and route the
+         * farmer's turns to the mediation.
+         */
+        private void startMediation(Leg buyer) {
+            Mediation m = mediation;
+            if (ended || mediating != null || m == null) {
+                log.info("Not mediating buyer leg {} on call {}: the farmer leg ended or is already mediating",
+                        buyer.id(), callId);
+                return;
+            }
+            generation++;
+            hold = null;
+            thinkingFor = 0;
+            waitingCall = null;
+            if (speaking != null) {
+                stopSpeaking();
+            }
+            try {
+                mediating = m.start(leg, buyer, () -> mailbox.post(this::mediationEnded));
+            } catch (RuntimeException e) {
+                log.error("Could not start mediation on call {}; the farmer stays with the assistant", callId, e);
+            }
+        }
+
+        /** In the mailbox. */
+        private void mediationEnded() {
+            if (mediating != null) {
+                log.info("Mediation ended on call {}; the farmer is back with the assistant", callId);
+                mediating = null;
+                mediationEndedMs = now();
+            }
         }
 
         // ---- start: memory, speech-to-text session, greeting ----
@@ -405,6 +491,11 @@ public final class CallPipeline {
             if (ended) {
                 return;
             }
+            utteranceInMediation = mediating != null; // the mode is bound when the utterance starts
+            if (mediating != null) {
+                mediating.onSpeechStart();
+                return;
+            }
             if (speaking != null) {
                 log.debug("Barge-in on leg {}", leg.id());
                 generation++;
@@ -454,7 +545,22 @@ public final class CallPipeline {
 
         /** In the mailbox. */
         private void turnHeard(Turn turn) {
-            if (ended || context == null) {
+            if (ended) {
+                return;
+            }
+            boolean startedInMediation = utteranceInMediation || turn.startedMs() < mediationEndedMs;
+            utteranceInMediation = false;
+            if (mediating != null) {
+                mediating.onFinalTurn(turn); // never the brain: nothing said during mediation reaches its tools
+                return;
+            }
+            if (startedInMediation) {
+                // Begun while the farmer was talking to the buyer: it was meant for the buyer, so it is dropped rather
+                // than answered by the brain or allowed to call a tool.
+                log.info("Dropping a farmer turn on call {} that started during mediation", callId);
+                return;
+            }
+            if (context == null) {
                 return;
             }
             List<Line> history = List.copyOf(lines);
@@ -771,6 +877,8 @@ public final class CallPipeline {
                 return;
             }
             ended = true;
+            farmers.remove(callId, this);
+            mediating = null;
             generation++;
             hold = null;
             thinkingFor = 0;

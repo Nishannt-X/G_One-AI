@@ -15,8 +15,10 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Everything one task writes is visible to every later task, whichever thread runs it, so state that only tasks touch
  * needs no lock. Tasks must not block: slow work belongs on an executor, and its result comes back as a new task.
+ *
+ * <p>Public so mediation ({@code agent.mediation}) can run each mediated call as the same kind of actor.
  */
-final class SerialMailbox {
+public final class SerialMailbox {
     private static final Logger log = LoggerFactory.getLogger(SerialMailbox.class);
 
     private final Queue<Runnable> queue = new ConcurrentLinkedQueue<>();
@@ -24,11 +26,11 @@ final class SerialMailbox {
     private final String owner;
 
     /** @param owner names the mailbox in logs, for example a leg id */
-    SerialMailbox(String owner) {
+    public SerialMailbox(String owner) {
         this.owner = Objects.requireNonNull(owner, "owner");
     }
 
-    void post(Runnable task) {
+    public void post(Runnable task) {
         queue.add(Objects.requireNonNull(task, "task"));
         // Either this thread becomes the runner, or the current runner is guaranteed to see the task: it re-checks the
         // queue after it stops running.

@@ -53,6 +53,7 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
     private final ObjectProvider<MemoryStore> memory;
     private final ObjectProvider<CallEndHandler> endHandlers;
     private final ObjectProvider<FixedLines> fixedLines;
+    private final ObjectProvider<CallPipeline.Mediation> mediation;
     private final Duration goodbyeGrace;
     private final Duration heldReplyRelease;
     private ExecutorService executor;
@@ -61,7 +62,7 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
     CallPipelineStarter(LegRegistry registry, ConsoleBus bus, ObjectProvider<AgentBrain> brain,
                         ObjectProvider<SpeechToText> speechToText, ObjectProvider<TextToSpeech> textToSpeech,
                         ObjectProvider<MemoryStore> memory, ObjectProvider<CallEndHandler> endHandlers,
-                        ObjectProvider<FixedLines> fixedLines,
+                        ObjectProvider<FixedLines> fixedLines, ObjectProvider<CallPipeline.Mediation> mediation,
                         @Value("${g-one.pipeline.goodbye-grace-ms:8000}") long goodbyeGraceMs,
                         @Value("${g-one.pipeline.held-reply-release-ms:1500}") long heldReplyReleaseMs) {
         this.registry = registry;
@@ -72,6 +73,7 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
         this.memory = memory;
         this.endHandlers = endHandlers;
         this.fixedLines = fixedLines;
+        this.mediation = mediation;
         this.goodbyeGrace = Duration.ofMillis(goodbyeGraceMs);
         this.heldReplyRelease = Duration.ofMillis(heldReplyReleaseMs);
     }
@@ -106,6 +108,10 @@ class CallPipelineStarter implements SmartInitializingSingleton, DisposableBean 
         pipeline = new CallPipeline(b, stt, tts, store, bus, endHandlers.orderedStream().toList(), executor,
                 System::currentTimeMillis, goodbyeGrace, heldReplyRelease, goodbyes,
                 CallPipeline.executorDelays(executor));
+        CallPipeline.Mediation m = mediation.getIfUnique();
+        if (m != null) {
+            pipeline.useMediation(m); // #26: buyer legs are mediated; without it they are ignored
+        }
         pipeline.attach(registry);
         log.info("The call pipeline is on");
     }
