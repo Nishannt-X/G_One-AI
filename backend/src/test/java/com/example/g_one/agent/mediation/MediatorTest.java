@@ -6,26 +6,33 @@ import static com.example.g_one.agent.mediation.MediationFixture.frames;
 import static com.example.g_one.agent.mediation.MediationFixture.translation;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.example.g_one.agent.caution.Caution;
+import com.example.g_one.core.AudioFrame;
 import com.example.g_one.core.CallId;
 import com.example.g_one.core.ConsoleEvent;
 import com.example.g_one.core.ConsoleEvent.WhisperKind;
+import com.example.g_one.core.Language;
 import com.example.g_one.core.LegRole;
 import com.example.g_one.core.LegSource;
 import com.example.g_one.core.SttListener;
 import com.example.g_one.fakes.FakeLeg;
 import com.example.g_one.fakes.FakeSpeechToText;
 import com.example.g_one.fakes.FakeTextToSpeech;
+import com.example.g_one.memory.SecretScrubber;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Mediation against fakes: a Hindi farmer and an English buyer unless a test says otherwise. Synthetic data only. */
+/**
+ * Mediation against fakes: a Hindi farmer and an English buyer unless a test says otherwise. Synthetic data only.
+ * {@link #start()} settles the buyer's consent first; the assertions after it only look at what came after consent.
+ */
 class MediatorTest {
     private static final String OPENING = MediationLines.HINDI_WHISPER_OPENING;
     private static final String HOLD = MediationLines.ENGLISH_HOLD;
+    private static final String INTRO = MediationLines.buyerIntro(FakeLeg.ENGLISH, FakeLeg.HINDI);
+    private static final String JOINED = MediationLines.buyerJoined(FakeLeg.HINDI, FakeLeg.ENGLISH);
 
     private final CallId callId = CallId.of("c-mediation");
     private final AtomicInteger ended = new AtomicInteger();
@@ -34,6 +41,9 @@ class MediatorTest {
     private FakeLeg buyer;
     private FakeSpeechToText.Session farmerSays;
     private FakeSpeechToText.Session buyerSays;
+    private int farmerBase;
+    private int buyerBase;
+    private int ttsBase;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -45,7 +55,8 @@ class MediatorTest {
         f.close();
     }
 
-    private void start(FakeLeg farmerLeg, FakeLeg buyerLeg) {
+    /** Starts mediation without settling consent. */
+    private void join(FakeLeg farmerLeg, FakeLeg buyerLeg) {
         farmer = farmerLeg;
         buyer = buyerLeg;
         SttListener farmerListener = f.mediator.start(farmer, buyer, ended::incrementAndGet);
@@ -54,28 +65,144 @@ class MediatorTest {
         farmerSays = f.stt.open(farmer.id(), LegRole.FARMER, farmer.language(), farmerListener);
     }
 
+    private void join() {
+        join(FakeLeg.farmer(callId), FakeLeg.buyer(callId));
+    }
+
+    /** Joins, settles consent with a yes, and forgets everything said so far. */
+    private void start(FakeLeg farmerLeg, FakeLeg buyerLeg) {
+        join(farmerLeg, buyerLeg);
+        f.consent(farmer, buyer);
+        farmerBase = farmer.played().size();
+        buyerBase = buyer.played().size();
+        ttsBase = f.tts.requests().size();
+        f.events.clear();
+    }
+
     private void start() {
         start(FakeLeg.farmer(callId), FakeLeg.buyer(callId));
     }
+
+    private List<AudioFrame> farmerPlayed() {
+        return farmer.played().subList(farmerBase, farmer.played().size());
+    }
+
+    private List<AudioFrame> buyerPlayed() {
+        return buyer.played().subList(buyerBase, buyer.played().size());
+    }
+
+    private List<FakeTextToSpeech.Request> tts() {
+        List<FakeTextToSpeech.Request> all = f.tts.requests();
+        return all.subList(ttsBase, all.size());
+    }
+
+    // ---- buyer consent ----
+
+    @Test
+    void theBuyerHearsTheIntroductionAndAYesStartsMediation() {
+        join();
+        assertThat(f.events(ConsoleEvent.LegJoined.class)).singleElement()
+                .satisfies(e -> assertThat(e.role()).isEqualTo(LegRole.BUYER));
+        assertThat(f.tts.requests()).singleElement().satisfies(r -> {
+            assertThat(r.text()).isEqualTo(INTRO).contains("Please say yes or no.").contains("Hindi");
+            assertThat(r.language()).isEqualTo(FakeLeg.ENGLISH);
+        });
+        assertThat(buyer.played()).hasSize(frames(INTRO));
+        assertThat(farmer.played()).isEmpty(); // only the buyer hears the introduction
+
+        // "Hello?" while the introduction plays neither cuts it nor counts as the answer.
+        buyerSays.emitSpeechStart();
+        assertThat(buyer.clearCount()).isZero();
+        buyer.finishPlayback();
+        buyerSays.emitTurn("Hello?");
+        assertThat(f.tts.requests()).hasSize(1);
+
+        buyerSays.say("Yes");
+        assertThat(f.tts.requests()).hasSize(2);
+        assertThat(f.tts.requests().get(1).text()).isEqualTo(JOINED).startsWith("ख़रीदार लाइन पर हैं").contains("अंग्रेज़ी");
+        assertThat(farmer.played()).hasSize(frames(JOINED));
+        assertThat(f.llm.requests()).isEmpty(); // consent is decided in code, never by the model
+        assertThat(ended).hasValue(0);
+
+        // Now turns flow.
+        farmer.finishPlayback();
+        f.llm.replyText(NO_CAUTION).replyText(translation("नमस्ते", "नमस्ते")).replyText(NO_OFFER);
+        buyerSays.say("Hello");
+        assertThat(f.events(ConsoleEvent.TurnTranslated.class)).hasSize(1);
+    }
+
+    @Test
+    void aNoEndsTheBuyerLegAndTellsTheFarmer() {
+        join();
+        buyer.finishPlayback();
+        buyerSays.say("No, not now");
+        assertBuyerDeclined();
+    }
+
+    @Test
+    void anUnclearAnswerIsANo() {
+        join();
+        buyer.finishPlayback();
+        buyerSays.say("Yes but call me later");
+        assertBuyerDeclined();
+    }
+
+    @Test
+    void noAnswerWithinTheConsentTimeoutIsANo() {
+        join();
+        buyer.finishPlayback();
+        assertThat(f.tts.requests()).hasSize(1);
+        f.fireTimers();
+        assertBuyerDeclined();
+    }
+
+    private void assertBuyerDeclined() {
+        String apology = MediationLines.ENGLISH_BUYER_APOLOGY;
+        String told = MediationLines.HINDI_BUYER_DECLINED;
+        assertThat(f.tts.requests()).extracting(FakeTextToSpeech.Request::text).containsExactly(INTRO, apology);
+        assertThat(buyer.played()).hasSize(frames(INTRO) + frames(apology));
+        assertThat(buyer.isEnded()).isFalse(); // the apology is heard before the leg ends
+        buyer.finishPlayback();
+        assertThat(f.tts.requests()).extracting(FakeTextToSpeech.Request::text).containsExactly(INTRO, apology, told);
+        assertThat(farmer.played()).hasSize(frames(told));
+        farmer.finishPlayback();
+
+        assertThat(buyer.isEnded()).isTrue();
+        assertThat(buyer.hungUpByUs()).isTrue();
+        assertThat(ended).hasValue(1); // the farmer goes back to the assistant
+        assertThat(f.events(ConsoleEvent.LegEnded.class)).singleElement()
+                .satisfies(e -> assertThat(e.reason()).isEqualTo("no_consent"));
+        assertThat(f.llm.requests()).isEmpty();
+        assertThat(f.events(ConsoleEvent.TurnTranslated.class)).isEmpty();
+    }
+
+    @Test
+    void nothingTheFarmerSaysBeforeTheBuyersYesIsRelayed() {
+        join();
+        farmerSays.say("हेलो? कौन है?");
+        assertThat(f.llm.requests()).isEmpty();
+        assertThat(f.tts.requests()).extracting(FakeTextToSpeech.Request::text).containsExactly(INTRO);
+        assertThat(f.events(ConsoleEvent.TurnTranslated.class)).isEmpty();
+    }
+
+    // ---- turns ----
 
     @Test
     void translatesEachTurnIntoTheListenersLanguageBothWays() {
         start();
         assertThat(buyerSays.role()).isEqualTo(LegRole.BUYER);
-        assertThat(f.events(ConsoleEvent.LegJoined.class)).singleElement()
-                .satisfies(e -> assertThat(e.role()).isEqualTo(LegRole.BUYER));
 
         String hindi = "नमस्ते, क्या प्याज़ तैयार है?";
         f.llm.replyText(NO_CAUTION).replyText(translation(hindi, hindi)).replyText(NO_OFFER);
         buyerSays.say("Hello, is the onion ready?");
 
-        assertThat(f.tts.requests()).singleElement().satisfies(r -> {
+        assertThat(tts()).singleElement().satisfies(r -> {
             assertThat(r.text()).isEqualTo(hindi);
             assertThat(r.language()).isEqualTo(FakeLeg.HINDI);
             assertThat(r.sampleRate()).isEqualTo(8000);
         });
-        assertThat(farmer.played()).hasSize(frames(hindi));
-        assertThat(buyer.played()).isEmpty(); // raw audio never crosses legs, and the buyer hears nothing back
+        assertThat(farmerPlayed()).hasSize(frames(hindi));
+        assertThat(buyerPlayed()).isEmpty(); // raw audio never crosses legs, and the buyer hears nothing back
         JsonAssert.translationRequest(f, 1, "en-IN", "hi-IN", "Hello, is the onion ready?");
 
         farmer.finishPlayback();
@@ -84,9 +211,9 @@ class MediatorTest {
         f.llm.replyText(NO_CAUTION).replyText(translation(english, spoken));
         farmerSays.say("हाँ, बीस क्विंटल तैयार है।");
 
-        assertThat(f.tts.requests()).hasSize(2);
-        assertThat(f.tts.requests().get(1).language()).isEqualTo(FakeLeg.ENGLISH);
-        assertThat(buyer.played()).hasSize(frames(spoken));
+        assertThat(tts()).hasSize(2);
+        assertThat(tts().get(1).language()).isEqualTo(FakeLeg.ENGLISH);
+        assertThat(buyerPlayed()).hasSize(frames(spoken));
         assertThat(f.llm.requests()).hasSize(5); // a farmer turn needs no offer read-out
 
         List<ConsoleEvent.TurnTranslated> translated = f.events(ConsoleEvent.TurnTranslated.class);
@@ -130,14 +257,14 @@ class MediatorTest {
         assertThat(sent.kind()).isEqualTo(WhisperKind.PRICE_REFERENCE);
         assertThat(sent.legId()).isEqualTo(farmer.id());
         assertThat(sent.text()).isEqualTo(OPENING + whisper);
-        assertThat(f.tts.requests().getLast().text()).startsWith("यह सिर्फ़ आप सुन रहे हैं");
+        assertThat(tts().getLast().text()).startsWith("यह सिर्फ़ आप सुन रहे हैं");
         // The buyer hears one "One moment please" and nothing of the whisper.
-        assertThat(buyer.played()).hasSize(frames(HOLD));
+        assertThat(buyerPlayed()).hasSize(frames(HOLD));
         assertThat(f.events(ConsoleEvent.AssistantSaid.class)).singleElement().satisfies(e -> {
             assertThat(e.role()).isEqualTo(LegRole.BUYER);
             assertThat(e.text()).isEqualTo(HOLD);
         });
-        assertThat(farmer.played()).hasSize(frames(f.tts.requests().get(0).text()) + frames(OPENING + whisper));
+        assertThat(farmerPlayed()).hasSize(frames(tts().get(0).text()) + frames(OPENING + whisper));
         assertThat(f.events).filteredOn(e -> e instanceof ConsoleEvent.TurnTranslated
                         || e instanceof ConsoleEvent.WhisperSent)
                 .extracting(e -> e.getClass().getSimpleName())
@@ -157,6 +284,20 @@ class MediatorTest {
     }
 
     @Test
+    void anOfferJustBelowTheReferenceIsBelowEvenWhenItRoundsUpToIt() {
+        start();
+        f.llm.replyText(NO_CAUTION).replyText(translation("ठीक", "ठीक"))
+                .replyText("{\"status\":\"clear\",\"commodity\":\"onion\",\"price\":4499.6,\"unit\":\"quintal\"}")
+                .replyText(translation("कम", "कम"));
+        buyerSays.say("Four thousand four hundred ninety nine rupees sixty paise a quintal.");
+
+        // 4,499.60 rounds to 4,500 but is below 4,500; the spoken numbers must not contradict "below".
+        assertThat(f.sentData(3).path("text").asText()).startsWith(
+                "that offer of four thousand four hundred ninety-nine rupees per quintal is below the AGMARKNET listing "
+                        + "of four thousand five hundred rupees");
+    }
+
+    @Test
     void anUnclearOfferOrAnotherCropGetsNoWhisper() {
         start();
         f.llm.replyText(NO_CAUTION).replyText(translation("गेहूँ?", "गेहूँ?"))
@@ -170,64 +311,133 @@ class MediatorTest {
 
         assertThat(f.llm.requests()).hasSize(6);
         assertThat(f.events(ConsoleEvent.WhisperSent.class)).isEmpty();
-        assertThat(buyer.played()).isEmpty();
+        assertThat(buyerPlayed()).isEmpty();
     }
 
+    // ---- cautions and secrets ----
+
     @Test
-    void anOtpRequestEarnsAFarmerOnlyCautionFirstThatNeverEchoesTheTurn() {
+    void anOtpRequestEarnsTheFixedFarmerOnlyCautionFirstWithNoModelWording() {
         start();
         String request = "Tell me the OTP on your phone so I can send the money.";
         String hindiRequest = "अपने फ़ोन पर आया OTP बताइए ताकि मैं पैसे भेज सकूँ।";
-        String caution = "सावधान: पैसे लेने के लिए कभी PIN या OTP नहीं लगता।";
+        String caution = MediationLines.HINDI_CAUTION_REQUEST;
+        assertThat(caution).isEqualTo("यह सिर्फ़ आप सुन रहे हैं: पैसे लेने के लिए कभी PIN या OTP नहीं लगता। "
+                + "किसी को मत बताइए।"); // docs/call-flow.md, "Caution (fixed)"
         f.llm.replyText("{\"status\":\"ok\",\"secretRequest\":true,\"secretShare\":false}")
                 .replyText(translation(hindiRequest, hindiRequest))
-                .replyText(NO_OFFER)
-                .replyText(translation(caution, caution));
+                .replyText(NO_OFFER);
         buyerSays.say(request);
 
-        // The caution is our fixed wording, not anything the buyer said.
-        assertThat(f.sentData(3).path("text").asText()).isEqualTo(Caution.SECRET_REQUEST.text(LegRole.BUYER));
+        assertThat(f.llm.requests()).hasSize(3); // classifier, translation, offer read-out: the caution is not translated
         assertThat(f.sentData(0).path("text").asText()).isEqualTo(request); // the classifier gets it as a data field
         assertThat(f.systemPrompt(0)).doesNotContain(request);
 
         ConsoleEvent.WhisperSent sent = f.events(ConsoleEvent.WhisperSent.class).getFirst();
         assertThat(sent.kind()).isEqualTo(WhisperKind.CAUTION);
         assertThat(sent.legId()).isEqualTo(farmer.id());
-        assertThat(sent.text()).isEqualTo(OPENING + caution);
+        assertThat(sent.language()).isEqualTo("hi-IN");
+        assertThat(sent.text()).isEqualTo(caution);
+        assertThat(tts().get(1).text()).isEqualTo(caution);
         // The farmer hears the caution first; the translated request waits until it was heard.
         assertThat(f.events(ConsoleEvent.TurnTranslated.class)).isEmpty();
-        assertThat(farmer.played()).hasSize(frames(OPENING + caution));
-        assertThat(buyer.played()).hasSize(frames(HOLD));
+        assertThat(farmerPlayed()).hasSize(frames(caution));
+        assertThat(buyerPlayed()).hasSize(frames(HOLD));
 
         farmer.finishPlayback();
 
         assertThat(f.events(ConsoleEvent.TurnTranslated.class)).singleElement()
                 .satisfies(t -> assertThat(t.text()).isEqualTo(hindiRequest));
-        assertThat(farmer.played()).hasSize(frames(OPENING + caution) + frames(hindiRequest));
-        assertThat(buyer.played()).hasSize(frames(HOLD)); // one "One moment please", never a whisper
+        assertThat(farmerPlayed()).hasSize(frames(caution) + frames(hindiRequest));
+        assertThat(buyerPlayed()).hasSize(frames(HOLD)); // one "One moment please", never a whisper
     }
 
     @Test
-    void aSecretTheFarmerSaysAloudEarnsACautionThatNeverRepeatsIt() {
+    void aFarmerWhoIsNotHindiGetsTheEnglishFixedCaution() {
+        Language hinglish = new Language("hi-en", "Hinglish", "Poorvi");
+        start(new FakeLeg(callId, LegRole.FARMER, LegSource.TWILIO, hinglish, FakeLeg.FARMER_KEY),
+                FakeLeg.buyer(callId));
+        f.llm.replyText("{\"status\":\"threat\",\"secretRequest\":false,\"secretShare\":false}")
+                .replyText(translation("Paise do warna...", "Paise do warna...")).replyText(NO_OFFER);
+        buyerSays.say("Pay up or else.");
+
+        ConsoleEvent.WhisperSent sent = f.events(ConsoleEvent.WhisperSent.class).getFirst();
+        assertThat(sent.text()).isEqualTo(MediationLines.ENGLISH_CAUTION_THREAT);
+        assertThat(sent.language()).isEqualTo("en-IN");
+        assertThat(f.llm.requests()).hasSize(3);
+    }
+
+    @Test
+    void aSecretTheFarmerSaysAloudIsRedactedEverywhereAndEarnsTheFixedCaution() {
         start();
         String secret = "482913";
-        String caution = "सावधान: आपकी बात में कोई निजी सुरक्षा जानकारी लगी।";
+        String redacted = "मेरा OTP " + SecretScrubber.REMOVED + " है।";
         f.llm.replyText("{\"status\":\"ok\",\"secretRequest\":false,\"secretShare\":true}")
-                .replyText(translation("My OTP is " + secret + ".", "My OTP is four eight two nine one three."))
-                .replyText(translation(caution, caution));
+                .replyText(translation("My OTP is [number removed].", "My OTP is number removed."));
         farmerSays.say("मेरा OTP " + secret + " है।");
 
-        assertThat(f.sentData(2).path("text").asText()).isEqualTo(Caution.SECRET_SHARE.text(LegRole.FARMER));
+        // Neither the console, the classifier nor the translator ever saw the secret.
+        assertThat(f.events(ConsoleEvent.TurnHeard.class)).singleElement()
+                .satisfies(e -> assertThat(e.text()).isEqualTo(redacted));
+        assertThat(f.sentData(0).path("text").asText()).isEqualTo(redacted);
+        assertThat(f.sentData(1).path("text").asText()).isEqualTo(redacted);
+        assertThat(f.llm.requests()).hasSize(2);
+        assertThat(f.llm.requests()).allSatisfy(r -> assertThat(r.toString()).doesNotContain(secret));
+        assertThat(f.events(ConsoleEvent.TurnTranslated.class)).singleElement()
+                .satisfies(t -> assertThat(t.text()).doesNotContain(secret));
         assertThat(f.events(ConsoleEvent.WhisperSent.class)).isEmpty(); // after the turn reached the buyer
         buyer.finishPlayback();
 
         ConsoleEvent.WhisperSent sent = f.events(ConsoleEvent.WhisperSent.class).getFirst();
         assertThat(sent.kind()).isEqualTo(WhisperKind.CAUTION);
-        assertThat(sent.text()).doesNotContain(secret);
-        assertThat(f.tts.requests()).filteredOn(r -> r.language().equals(FakeLeg.HINDI))
-                .allSatisfy(r -> assertThat(r.text()).doesNotContain(secret).doesNotContain("चार आठ"));
+        assertThat(sent.text()).isEqualTo(MediationLines.HINDI_CAUTION_SHARE);
+        assertThat(tts()).allSatisfy(r -> assertThat(r.text()).doesNotContain(secret));
         assertThat(f.events(ConsoleEvent.AssistantSaid.class)).singleElement()
                 .satisfies(e -> assertThat(e.role()).isEqualTo(LegRole.BUYER));
+    }
+
+    @Test
+    void aCodeSpokenAsDigitWordsAfterAPinLabelIsRedacted() {
+        start();
+        f.llm.replyText("{\"status\":\"ok\",\"secretRequest\":false,\"secretShare\":true}")
+                .replyText(translation("मेरा PIN [number removed] है।", "मेरा PIN नंबर हटाया गया है।"))
+                .replyText(NO_OFFER);
+        buyerSays.say("My PIN is four eight two nine.");
+
+        assertThat(f.events(ConsoleEvent.TurnHeard.class)).singleElement()
+                .satisfies(e -> assertThat(e.text()).isEqualTo("My PIN is " + SecretScrubber.REMOVED + "."));
+        assertThat(f.llm.requests()).allSatisfy(r -> assertThat(r.toString()).doesNotContain("four eight"));
+        assertThat(TurnRedactor.redact("mera OTP chaar aath do nau hai").text())
+                .isEqualTo("mera OTP " + SecretScrubber.REMOVED + " hai");
+        assertThat(TurnRedactor.redact("ओटीपी चार आठ दो नौ").text()).isEqualTo("ओटीपी " + SecretScrubber.REMOVED);
+        // Not a secret: a price in words, and a label with too few digit words.
+        assertThat(TurnRedactor.redact("twenty quintals at four thousand").changed()).isFalse();
+        assertThat(TurnRedactor.redact("what is the pin code, one?").changed()).isFalse();
+    }
+
+    @Test
+    void aSecretTheRedactorMissesIsWithheldEntirely() {
+        start();
+        f.llm.replyText("{\"status\":\"ok\",\"secretRequest\":false,\"secretShare\":true}");
+        farmerSays.say("मेरा पासवर्ड टाइगर है।");
+
+        assertThat(f.llm.requests()).hasSize(1); // no translation: nothing of the turn reaches the buyer
+        assertThat(f.events(ConsoleEvent.TurnTranslated.class)).isEmpty();
+        assertThat(tts()).extracting(FakeTextToSpeech.Request::text)
+                .containsExactly(HOLD, MediationLines.HINDI_CAUTION_SHARE);
+        assertThat(buyerPlayed()).hasSize(frames(HOLD));
+    }
+
+    @Test
+    void whenTheClassifierFailsTheRedactedTextIsRelayedNeverTheRawOne() {
+        start();
+        f.llm.replyText("not json").replyText(translation("My card is [number removed].", "My card is number removed."));
+        farmerSays.say("मेरा कार्ड 4111 1111 1111 1111 है।");
+
+        assertThat(f.sentData(1).path("text").asText()).doesNotContain("4111").contains(SecretScrubber.REMOVED);
+        assertThat(f.events(ConsoleEvent.TurnHeard.class)).singleElement()
+                .satisfies(e -> assertThat(e.text()).doesNotContain("4111"));
+        assertThat(buyerPlayed()).hasSize(frames("My card is number removed."));
     }
 
     @Test
@@ -240,8 +450,8 @@ class MediatorTest {
 
         assertThat(f.llm.requests()).hasSize(2); // no caution wording was even prepared for the buyer
         assertThat(f.events(ConsoleEvent.WhisperSent.class)).isEmpty();
-        assertThat(f.tts.requests()).singleElement().satisfies(r -> assertThat(r.text()).isEqualTo(english));
-        assertThat(buyer.played()).hasSize(frames(english));
+        assertThat(tts()).singleElement().satisfies(r -> assertThat(r.text()).isEqualTo(english));
+        assertThat(buyerPlayed()).hasSize(frames(english));
     }
 
     @Test
@@ -255,12 +465,14 @@ class MediatorTest {
         assertThat(f.llm.requests()).hasSize(2);
         assertThat(f.llm.requests()).noneSatisfy(r ->
                 assertThat(r.path("messages").get(0).path("content").asText()).isEqualTo(Translator.INSTRUCTIONS));
-        assertThat(f.tts.requests()).singleElement().satisfies(r -> assertThat(r.text()).isEqualTo(turn));
+        assertThat(tts()).singleElement().satisfies(r -> assertThat(r.text()).isEqualTo(turn));
         assertThat(f.events(ConsoleEvent.TurnTranslated.class)).singleElement().satisfies(t -> {
             assertThat(t.text()).isEqualTo(turn);
             assertThat(t.fromLanguage()).isEqualTo(t.toLanguage());
         });
     }
+
+    // ---- floor, barge-in, the end ----
 
     @Test
     void turnsHeardWhileTheFloorIsBusyWaitInOrderAndAreNeverDropped() {
@@ -275,10 +487,10 @@ class MediatorTest {
         // Only the first turn is handled while the farmer still hears it.
         assertThat(f.llm.requests()).hasSize(3);
         assertThat(f.events(ConsoleEvent.TurnHeard.class)).hasSize(3);
-        assertThat(f.tts.requests()).extracting(FakeTextToSpeech.Request::text).containsExactly("एक");
+        assertThat(tts()).extracting(FakeTextToSpeech.Request::text).containsExactly("एक");
 
         farmer.finishPlayback();
-        assertThat(f.tts.requests()).extracting(FakeTextToSpeech.Request::text).containsExactly("एक", "दो");
+        assertThat(tts()).extracting(FakeTextToSpeech.Request::text).containsExactly("एक", "दो");
         farmer.finishPlayback();
 
         assertThat(f.llm.requests()).hasSize(9);
@@ -301,7 +513,7 @@ class MediatorTest {
         farmerSays.emitTurn("रुकिए");
 
         // The floor was free again, so the farmer's turn went straight through.
-        assertThat(buyer.played()).hasSize(frames("Wait"));
+        assertThat(buyerPlayed()).hasSize(frames("Wait"));
     }
 
     @Test
@@ -311,10 +523,10 @@ class MediatorTest {
         buyerSays.say("Hello?");
 
         assertThat(f.events(ConsoleEvent.TurnTranslated.class)).isEmpty();
-        assertThat(farmer.played()).isEmpty();
-        assertThat(f.tts.requests()).singleElement()
+        assertThat(farmerPlayed()).isEmpty();
+        assertThat(tts()).singleElement()
                 .satisfies(r -> assertThat(r.text()).isEqualTo(MediationLines.ENGLISH_NOT_TRANSLATED));
-        assertThat(buyer.played()).hasSize(frames(MediationLines.ENGLISH_NOT_TRANSLATED));
+        assertThat(buyerPlayed()).hasSize(frames(MediationLines.ENGLISH_NOT_TRANSLATED));
     }
 
     @Test
@@ -324,17 +536,47 @@ class MediatorTest {
 
         assertThat(ended).hasValue(1);
         assertThat(buyerSays.isClosed()).isTrue();
-        assertThat(f.events(ConsoleEvent.LegEnded.class)).singleElement()
-                .satisfies(e -> assertThat(e.role()).isEqualTo(LegRole.BUYER));
+        assertThat(f.events(ConsoleEvent.LegEnded.class)).singleElement().satisfies(e -> {
+            assertThat(e.role()).isEqualTo(LegRole.BUYER);
+            assertThat(e.reason()).isEqualTo("hangup");
+        });
         farmerSays.say("हेलो?");
         assertThat(f.llm.requests()).isEmpty();
     }
 
     @Test
-    void theFarmerHangingUpHangsUpTheBuyer() {
+    void theBuyerHangingUpClearsAQueuedWhisperSoNothingPlaysOnAfterward() {
         start();
+        String whisper = "वह ऑफ़र दर्ज भाव से कम है।";
+        f.llm.replyText(NO_CAUTION).replyText(translation("चार हज़ार", "चार हज़ार"))
+                .replyText("{\"status\":\"clear\",\"commodity\":\"onion\",\"price\":4000,\"unit\":\"quintal\"}")
+                .replyText(translation(whisper, whisper));
+        buyerSays.say("Four thousand a quintal.");
+        farmer.finishPlayback(); // the translated offer was heard; the whisper is now queued on the farmer leg
+        assertThat(f.events(ConsoleEvent.WhisperSent.class)).hasSize(1);
+        int clearsBefore = farmer.clearCount();
+        assertThat(farmer.unheardFrames()).isPositive();
+
+        buyer.remoteHangup();
+
+        assertThat(farmer.clearCount()).isEqualTo(clearsBefore + 1); // the whisper is dropped, not played over the brain
+        assertThat(farmer.unheardFrames()).isZero();
+        int ttsAfter = f.tts.requests().size();
+        farmer.finishPlayback();
+        f.fireTimers();
+        assertThat(f.tts.requests()).hasSize(ttsAfter);
+    }
+
+    @Test
+    void theFarmerHangingUpClearsTheBuyerLegAndHangsItUp() {
+        start();
+        f.llm.replyText(NO_CAUTION).replyText(translation("A long reply", "A long reply"));
+        farmerSays.say("लंबा जवाब");
+        assertThat(buyer.unheardFrames()).isPositive();
+
         farmer.remoteHangup();
 
+        assertThat(buyer.clearCount()).isEqualTo(1);
         assertThat(buyer.isEnded()).isTrue();
         assertThat(buyer.hungUpByUs()).isTrue();
         assertThat(ended).hasValue(1);

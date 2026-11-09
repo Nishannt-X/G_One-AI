@@ -59,7 +59,8 @@ class MediationService implements CallPipeline.Mediation, DisposableBean {
                         throw new IllegalStateException("Mediation needs exactly one SpeechToText and TextToSpeech");
                     }
                     m = new Mediator(stt, tts, chat, json, mandi, bus, executor, System::currentTimeMillis,
-                            Mediator.DEFAULT_PLAYBACK_GRACE, (delayMs, task) -> CompletableFuture
+                            Mediator.DEFAULT_PLAYBACK_GRACE, Mediator.DEFAULT_CONSENT_TIMEOUT,
+                            (delayMs, task) -> CompletableFuture
                                     .delayedExecutor(delayMs, TimeUnit.MILLISECONDS, executor).execute(task));
                     mediator = m;
                 }

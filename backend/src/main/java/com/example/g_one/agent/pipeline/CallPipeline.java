@@ -51,8 +51,10 @@ import org.slf4j.LoggerFactory;
  * ({@link #useMediation}), the farmer leg stops speaking, drops any reply on the way, and hands both legs to the
  * mediation. From then on the farmer's speech-to-text events go to the mediation instead of the brain, so nothing said
  * during mediation reaches the brain or its tools, and those turns are not added to the transcript the end handlers
- * get. When the mediation reports that it ended (the buyer hung up), the farmer leg goes back to the brain. Without a
- * mediation, buyer legs are ignored.
+ * get. When the mediation reports that it ended (the buyer hung up or declined), the farmer leg goes back to the
+ * brain. Each utterance is bound to the mode at its speech start: one that started during mediation is dropped if its
+ * final transcript arrives after mediation ended, so it never reaches the brain or its tools. Without a mediation,
+ * buyer legs are ignored.
  *
  * <p>How one farmer leg works:
  * <ol>
@@ -306,6 +308,13 @@ public final class CallPipeline {
         private Utterance speaking;
         /** Receives the farmer's speech-to-text events while mediation runs; null otherwise. */
         private SttListener mediating;
+        /**
+         * True when the farmer's current utterance started while mediation ran. Its final turn never reaches the brain,
+         * even when speech-to-text finishes it after mediation ended (the buyer hung up mid-sentence).
+         */
+        private boolean utteranceInMediation;
+        /** When mediation last ended (pipeline clock); a turn that started before this is a mediation turn. */
+        private long mediationEndedMs = Long.MIN_VALUE;
 
         FarmerLeg(Leg leg) {
             this.leg = leg;
@@ -357,6 +366,7 @@ public final class CallPipeline {
             if (mediating != null) {
                 log.info("Mediation ended on call {}; the farmer is back with the assistant", callId);
                 mediating = null;
+                mediationEndedMs = now();
             }
         }
 
@@ -481,6 +491,7 @@ public final class CallPipeline {
             if (ended) {
                 return;
             }
+            utteranceInMediation = mediating != null; // the mode is bound when the utterance starts
             if (mediating != null) {
                 mediating.onSpeechStart();
                 return;
@@ -537,8 +548,16 @@ public final class CallPipeline {
             if (ended) {
                 return;
             }
+            boolean startedInMediation = utteranceInMediation || turn.startedMs() < mediationEndedMs;
+            utteranceInMediation = false;
             if (mediating != null) {
                 mediating.onFinalTurn(turn); // never the brain: nothing said during mediation reaches its tools
+                return;
+            }
+            if (startedInMediation) {
+                // Begun while the farmer was talking to the buyer: it was meant for the buyer, so it is dropped rather
+                // than answered by the brain or allowed to call a tool.
+                log.info("Dropping a farmer turn on call {} that started during mediation", callId);
                 return;
             }
             if (context == null) {

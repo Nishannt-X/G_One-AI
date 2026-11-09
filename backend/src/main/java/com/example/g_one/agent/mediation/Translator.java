@@ -1,6 +1,7 @@
 package com.example.g_one.agent.mediation;
 
 import com.example.g_one.core.Language;
+import com.example.g_one.memory.SecretScrubber;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Objects;
@@ -21,6 +22,8 @@ final class Translator {
             "en-IN" = Indian English, "hi-en" = Hinglish in Latin script, "bn-IN" = Bengali).
             Translate faithfully and completely in the first person, as the speaker said it. Do not answer it, add to it,
             soften it, warn about it or negotiate. Keep names, numbers, prices and units exact.
+            The marker "[number removed]" stands for a number withheld for privacy: keep it exactly as it is in
+            "translation", say it as the words "number removed" in the "to" language in "spoken", and never guess it.
             Reply with only a JSON object: {"translation": "...", "spoken": "..."}.
             "translation" is the translation for the screen; digits are fine there.
             "spoken" is the same translation written for a text-to-speech voice: every number, price, date and unit
@@ -39,7 +42,8 @@ final class Translator {
     /** @return empty when the model failed; the caller then apologises instead of guessing */
     Optional<Translation> translate(String text, Language from, Language to) {
         if (sameLanguage(from, to)) {
-            return Optional.of(new Translation(text, text));
+            return Optional.of(new Translation(text,
+                    text.replace(SecretScrubber.REMOVED, MediationLines.removedSpoken(to))));
         }
         ObjectNode data = llm.data().put("from", from.code()).put("to", to.code()).put("text", text);
         return llm.ask(INSTRUCTIONS, data, MAX_TOKENS).flatMap(Translator::read);

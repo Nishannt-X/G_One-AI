@@ -90,9 +90,14 @@ final class PriceWhisper {
         if (offered.isEmpty()) {
             return Optional.empty();
         }
-        long offeredRupees = offered.get().setScale(0, RoundingMode.HALF_UP).longValueExact();
-        long referenceRupees = s.price().setScale(0, RoundingMode.HALF_UP).longValueExact();
-        String comparison = offeredRupees < referenceRupees ? "below" : "at or above";
+        // Compare the exact converted values; round only for speech, and apart from each other so the spoken numbers
+        // never contradict the comparison (4,499.60 below 4,500 is said as four thousand four hundred ninety-nine).
+        boolean below = offered.get().compareTo(s.price()) < 0;
+        long offeredRupees = offered.get().setScale(0, below ? RoundingMode.FLOOR : RoundingMode.CEILING)
+                .longValueExact();
+        long referenceRupees = s.price().setScale(0, below ? RoundingMode.CEILING : RoundingMode.FLOOR)
+                .longValueExact();
+        String comparison = below ? "below" : "at or above";
         String crop = (s.variety() == null || s.variety().isBlank() ? "" : s.variety() + " ")
                 + s.commodity().toLowerCase(Locale.ROOT);
         return Optional.of("that offer of " + SpokenEnglish.number(offeredRupees) + " rupees per " + s.unit() + " is "

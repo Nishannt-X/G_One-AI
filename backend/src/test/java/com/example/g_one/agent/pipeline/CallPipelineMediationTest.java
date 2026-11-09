@@ -23,7 +23,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The pipeline's mediation hook (#26) with the real {@link com.example.g_one.agent.mediation.Mediator}: a buyer leg
- * joining a live farmer leg takes the farmer's turns away from the brain until the buyer hangs up.
+ * joining a live farmer leg takes the farmer's turns away from the brain until the buyer hangs up, and an utterance
+ * that started during mediation never reaches the brain, even when its final transcript arrives afterwards.
  */
 class CallPipelineMediationTest {
     private final AtomicLong clock = new AtomicLong(1_762_600_000_000L);
@@ -68,6 +69,14 @@ class CallPipelineMediationTest {
         return buyer;
     }
 
+    /** A buyer joins and says yes; mediation runs. */
+    private FakeLeg buyerAgrees() {
+        FakeLeg buyer = buyerJoins();
+        mediation.consent(farmer, buyer);
+        executor.runAll();
+        return buyer;
+    }
+
     @Test
     void aBuyerJoiningStopsTheAssistantAndStartsMediation() {
         assertThat(farmer.played()).isNotEmpty(); // the greeting is still playing
@@ -80,8 +89,9 @@ class CallPipelineMediationTest {
 
     @Test
     void forgetMeSaidDuringMediationIsTranslatedAndNeverReachesTheBrainOrItsTools() {
-        FakeLeg buyer = buyerJoins();
+        FakeLeg buyer = buyerAgrees();
         mediation.llm.replyText(NO_CAUTION).replyText(translation("Forget me!", "Forget me!"));
+        int buyerFramesBefore = buyer.played().size();
 
         farmerSays.say("mujhe bhool jao");
         executor.runAll();
@@ -92,7 +102,7 @@ class CallPipelineMediationTest {
         assertThat(mediation.events(ConsoleEvent.ToolCalled.class)).isEmpty();
         assertThat(mediation.events(ConsoleEvent.TurnTranslated.class)).singleElement()
                 .satisfies(t -> assertThat(t.text()).isEqualTo("Forget me!"));
-        assertThat(buyer.played()).hasSize(MediationFixture.frames("Forget me!"));
+        assertThat(buyer.played()).hasSize(buyerFramesBefore + MediationFixture.frames("Forget me!"));
         assertThat(store.load(FakeLeg.FARMER_KEY)).isEmpty();
 
         farmer.remoteHangup();
@@ -103,8 +113,34 @@ class CallPipelineMediationTest {
     }
 
     @Test
+    void anUtteranceThatStartedDuringMediationIsDroppedWhenItsFinalTurnArrivesAfterTheBuyerHungUp() {
+        FakeLeg buyer = buyerAgrees();
+
+        // The farmer starts speaking to the buyer; speech-to-text is still working on the turn (latched open) when
+        // the buyer hangs up and the farmer leg goes back to the assistant.
+        farmerSays.emitSpeechStart();
+        executor.runAll();
+        buyer.remoteHangup();
+        executor.runAll();
+        clock.addAndGet(1_500);
+        farmerSays.emitTurn("mujhe bhool jao");
+        executor.runAll();
+
+        assertThat(brain.responds).isEmpty(); // never brain.respond, so no forget_me or other tool
+        assertThat(mediation.llm.requests()).isEmpty();
+        assertThat(mediation.events(ConsoleEvent.ToolCalled.class)).isEmpty();
+
+        // The farmer's next utterance, begun after mediation ended, goes to the brain as usual.
+        clock.addAndGet(1_000);
+        farmerSays.say("ab kya karein?");
+        executor.runAll();
+        assertThat(brain.responds).singleElement()
+                .satisfies(c -> assertThat(c.latest().text()).isEqualTo("ab kya karein?"));
+    }
+
+    @Test
     void theFarmerGoesBackToTheAssistantWhenTheBuyerHangsUp() {
-        FakeLeg buyer = buyerJoins();
+        FakeLeg buyer = buyerAgrees();
         buyer.remoteHangup();
         executor.runAll();
 
@@ -113,6 +149,28 @@ class CallPipelineMediationTest {
 
         assertThat(brain.responds).singleElement()
                 .satisfies(c -> assertThat(c.latest().text()).isEqualTo("ab kya karein?"));
+        assertThat(mediation.llm.requests()).isEmpty();
+    }
+
+    @Test
+    void aBuyerWhoSaysNoIsHungUpAndTheFarmerGoesBackToTheAssistant() {
+        FakeLeg buyer = buyerJoins();
+        buyer.finishPlayback(); // the introduction was heard
+        mediation.buyerSession().say("No");
+        buyer.finishPlayback(); // the apology was heard
+        farmer.finishPlayback(); // the farmer heard that the buyer did not agree
+        executor.runAll();
+
+        assertThat(buyer.isEnded()).isTrue();
+        assertThat(buyer.hungUpByUs()).isTrue();
+        assertThat(mediation.events(ConsoleEvent.LegEnded.class)).singleElement()
+                .satisfies(e -> assertThat(e.reason()).isEqualTo("no_consent"));
+
+        clock.addAndGet(1_000);
+        farmerSays.say("theek hai");
+        executor.runAll();
+        assertThat(brain.responds).singleElement()
+                .satisfies(c -> assertThat(c.latest().text()).isEqualTo("theek hai"));
         assertThat(mediation.llm.requests()).isEmpty();
     }
 }
