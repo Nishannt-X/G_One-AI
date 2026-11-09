@@ -541,6 +541,154 @@ class LlmAgentBrainTest {
         return second.path("content").asText();
     }
 
+    // ---- the turn being answered, for tools ----------------------------------------------------------------
+
+    @Test
+    void toolsSeeTheTurnBeingAnsweredUntilANewerTurnSupersedesIt() throws Exception {
+        CallContext ctx = BrainFixture.newFarmer(HINDI);
+        List<LlmAgentBrain.AnsweringTurn> seen = new ArrayList<>();
+        List<Boolean> currentBefore = new ArrayList<>();
+        List<Boolean> currentAfterNewer = new ArrayList<>();
+        LlmAgentBrain[] brain = new LlmAgentBrain[1];
+        com.example.g_one.core.Tool probe = new com.example.g_one.core.Tool() {
+            @Override
+            public String name() {
+                return "probe";
+            }
+
+            @Override
+            public String description() {
+                return "test probe";
+            }
+
+            @Override
+            public JsonNode jsonSchema() {
+                return json("{\"type\":\"object\"}");
+            }
+
+            @Override
+            public com.example.g_one.core.ToolResult invoke(JsonNode args, CallContext c) {
+                LlmAgentBrain.AnsweringTurn a = LlmAgentBrain.answering(c).orElseThrow();
+                seen.add(a);
+                currentBefore.add(a.current());
+                assertThat(LlmAgentBrain.answering(BrainFixture.newFarmer(HINDI))).isEmpty(); // another call
+                Thread newer = new Thread(() -> brain[0].respond(c, List.of(), said(c, "second")));
+                newer.start();
+                try {
+                    newer.join(5_000);
+                } catch (InterruptedException e) {
+                    throw new AssertionError(e);
+                }
+                currentAfterNewer.add(a.current());
+                return com.example.g_one.core.ToolResult.ok("done");
+            }
+        };
+        BrainFixture.ScriptedChat chat = new BrainFixture.ScriptedChat(f.props, req -> {
+            ChatMessage lastMessage = last(req.messages());
+            if ("user".equals(lastMessage.role()) && "first".equals(lastMessage.content())) {
+                return new ChatReply("", List.of(new ToolCall("call_1", "probe", "{}")), "tool_calls");
+            }
+            return new ChatReply("ठीक है।", List.of(), "stop");
+        });
+        brain[0] = new LlmAgentBrain(chat, List.of(probe), f.gate, f.lines, f.fallback, f.registry, f.bus,
+                BrainFixture.JSON, BrainFixture.CLOCK);
+        com.example.g_one.core.Turn first = said(ctx, "first");
+
+        brain[0].respond(ctx, List.of(), first);
+
+        assertThat(seen).hasSize(1);
+        assertThat(seen.get(0).turn()).isEqualTo(first);
+        assertThat(seen.get(0).callId()).isEqualTo(ctx.callId());
+        assertThat(currentBefore).containsExactly(true);
+        assertThat(currentAfterNewer).containsExactly(false);
+        assertThat(seen.get(0).current()).isFalse(); // the answer is over
+        assertThat(LlmAgentBrain.answering(ctx)).isEmpty(); // not inside a respond
+    }
+
+    // ---- the terminal consent question --------------------------------------------------------------------
+
+    private static final String QUESTION = "क्या मैं अभी Mehta Agro Traders को फ़ोन करूँ? कृपया हाँ या ना बोलिए।";
+
+    /** A stand-in for ask_connect_buyer: registers a hook, optionally waits, then returns {@code result}. */
+    private static com.example.g_one.core.Tool askTool(com.example.g_one.core.ToolResult result, long waitMs,
+                                                       List<Boolean> hookRan) {
+        return new com.example.g_one.core.Tool() {
+            @Override
+            public String name() {
+                return com.example.g_one.agent.tools.buyers.AskConnectBuyerTool.NAME;
+            }
+
+            @Override
+            public String description() {
+                return "test ask";
+            }
+
+            @Override
+            public JsonNode jsonSchema() {
+                return json("{\"type\":\"object\"}");
+            }
+
+            @Override
+            public com.example.g_one.core.ToolResult invoke(JsonNode args, CallContext c) {
+                LlmAgentBrain.AnsweringTurn a = LlmAgentBrain.answering(c).orElseThrow();
+                a.onReplied(() -> hookRan.add(a.current()));
+                if (waitMs > 0) {
+                    try {
+                        Thread.sleep(waitMs);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return result;
+            }
+        };
+    }
+
+    private static BrainFixture.ScriptedChat askingChat(BrainFixture f) {
+        return new BrainFixture.ScriptedChat(f.props, req -> "tool".equals(last(req.messages()).role())
+                ? new ChatReply("ठीक है, मैं पूछ लेता हूँ।", List.of(), "stop")
+                : new ChatReply("", List.of(new ToolCall("call_1", "ask_connect_buyer", "{\"buyer_id\":\"x\"}")),
+                        "tool_calls"));
+    }
+
+    @Test
+    void askConnectBuyerEndsTheTurnWithItsQuestionVerbatimAndRunsItsHookOnce() {
+        List<Boolean> hookRan = new ArrayList<>();
+        BrainFixture.ScriptedChat chat = askingChat(f);
+        LlmAgentBrain brain = new LlmAgentBrain(chat, List.of(askTool(com.example.g_one.core.ToolResult.ok(QUESTION),
+                0, hookRan)), f.gate, f.lines, f.fallback, f.registry, f.bus, BrainFixture.JSON, BrainFixture.CLOCK);
+        CallContext ctx = BrainFixture.newFarmer(HINDI);
+
+        Reply r = brain.respond(ctx, List.of(), said(ctx, "Mehta ko lagao"));
+
+        assertThat(r.text()).isEqualTo(QUESTION);
+        assertThat(r.language().code()).isEqualTo("hi-IN");
+        assertThat(chat.requests).as("no model call after the question").hasSize(1);
+        assertThat(hookRan).as("ran once, while the answer was still current").containsExactly(true);
+    }
+
+    @Test
+    void aFailedAskOrATurnThatEndsInAnApologyNeverRunsTheHook() {
+        CallContext ctx = BrainFixture.newFarmer(HINDI);
+
+        List<Boolean> refused = new ArrayList<>();
+        BrainFixture.ScriptedChat chat = askingChat(f);
+        LlmAgentBrain brain = new LlmAgentBrain(chat, List.of(askTool(
+                com.example.g_one.core.ToolResult.error("not suggested"), 0, refused)), f.gate, f.lines, f.fallback,
+                f.registry, f.bus, BrainFixture.JSON, BrainFixture.CLOCK);
+        Reply r = brain.respond(ctx, List.of(), said(ctx, "Mehta ko lagao"));
+        assertThat(r.text()).isEqualTo("ठीक है, मैं पूछ लेता हूँ।"); // the model spoke instead of the fixed line
+        assertThat(refused).isEmpty();
+
+        List<Boolean> timedOut = new ArrayList<>();
+        LlmAgentBrain slow = new LlmAgentBrain(askingChat(f), List.of(askTool(
+                com.example.g_one.core.ToolResult.ok(QUESTION), 1_000, timedOut)), f.gate, f.lines, f.fallback,
+                f.registry, f.bus, BrainFixture.JSON, BrainFixture.CLOCK, java.time.Duration.ofMillis(200));
+        Reply late = slow.respond(ctx, List.of(), said(ctx, "Mehta ko lagao"));
+        assertThat(late.text()).isEqualTo(f.fallback.apology("hi-IN"));
+        assertThat(timedOut).isEmpty();
+    }
+
     private static JsonNode json(String text) {
         try {
             return BrainFixture.JSON.readTree(text);
