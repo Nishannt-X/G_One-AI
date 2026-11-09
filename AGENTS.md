@@ -17,5 +17,7 @@ Short version:
   unaltered `Automated review:` comment with `Verdict: APPROVE` for the exact head SHA (docs-only PRs are exempt, as
   defined there), CI is green, the diff stays in "Owns", and the merge uses `--match-head-commit`. Humans merge changes to agent instructions, `.github/**`, dependencies and ADRs. Never push to
   `main`.
+- Commit messages: short and descriptive (clear subject plus a brief what/why body), no `Co-Authored-By` trailer; no
+  tool attribution line in PR descriptions.
 - No secrets, no real phone numbers, no paid calls from tests. Synthetic data only.
 - Domain words: [CONTEXT.md](CONTEXT.md). Plan and dates: [ROADMAP.md](ROADMAP.md). Decisions: [docs/adr/](docs/adr/).

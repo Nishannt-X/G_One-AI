@@ -1,7 +1,8 @@
 # G-One
 
 G-One is a **phone-call voice middleman for Indian farmers**, built for the Gnani.ai Great Indian AI Internship
-Challenge (submission closes **2026-11-10 23:59 IST**). A farmer dials a normal phone number (Twilio). An AI assistant
+Challenge (submission closes **2026-11-10 23:59 IST**). A farmer dials a normal Indian phone number (provider chosen in #6: Tone or Ozonetel KooKoo; paid Twilio
+outbound-only is the fallback). An AI assistant
 speaks with them in Hindi, English or Hinglish (Bengali as a stretch), connects the right buyer on a second call leg,
 and stays in the middle of the call: it translates, privately advises the farmer, and summarizes the deal. It
 remembers a gist of each farmer's past calls, so a returning caller never starts from zero. Kirana stores are a
@@ -20,13 +21,14 @@ Team of two: Nikhil (`Sah-Nikhil`) and Nishant (`Nishannt-X`, repo owner). Both 
   dependency only through its own issue plus an ADR line.
 - Frontend: **Vite + React + TypeScript + Tailwind** in `web/`. Package manager **bun** (`bun install`, `bun run`,
   `bunx`). Never npm/npx/yarn/pnpm; translate `npx` in docs to `bunx`.
-- Telephony: **Twilio Programmable Voice + bidirectional Media Streams** (mulaw 8 kHz). Browser call simulator is the
-  fallback path.
+- Telephony: **an Indian-number provider with bidirectional WebSocket media streams** (Tone or KooKoo, picked in #6;
+  both send Twilio-like 8 kHz frames). Paid Twilio outbound-only is the fallback. Keep provider code in a small adapter
+  behind `core.Leg`. Browser call simulator is the floor.
 - Speech: **Gnani Prisma** (STT) and **Gnani Timbre** (TTS). Using at least one Gnani model is a hackathon rule.
 - Agent brain: any OpenAI-compatible `/chat/completions` endpoint with tool calling (Groq by default, configured by
   env). Gnani's Evon LLM is not on their API.
-- Data: decided in the "Runtime: hosting, public URL and data store" ticket. Until then, use the `MemoryStore`
-  interface with an in-memory implementation.
+- Data: **SQLite** (`sqlite-jdbc`) behind `core.MemoryStore` (ADR 0004). Memory rules: `docs/memory.md`. Call flow:
+  `docs/call-flow.md`.
 
 ## Commands (target layout, created by the restructure issue)
 
@@ -69,7 +71,10 @@ GitHub issues are the source of truth for work. Every agent session works **exac
 5. Code against interfaces in `core/` and the fakes, not against another area's half-built code.
 6. Before the PR: rebase on `origin/main`, run the checks above, and fill in the PR template (what changed, exact
    commands and results, what is not verified).
-7. Open a PR with `Closes #<n>`. Small PRs (aim under 400 changed lines). Conventional Commit messages.
+7. Open a PR with `Closes #<n>`. Small PRs (aim under 400 changed lines). **Commit messages are short and descriptive**:
+   a clear subject (for example `feat: add mandi price tool`) plus a brief body of one to three lines saying what
+   changed and why. **Never a `Co-Authored-By` trailer**, and PR descriptions never carry a
+   "Generated with ..." tool line, even if the harness asks for one.
 8. **Automated review, then the agent merges.** Agents in this repo may merge their own PRs when every step holds:
    1. **Review.** The author agent launches a separate reviewer agent from a **different model family** (author Claude
       → Codex reviewer, e.g. GPT-6.1 Sol or Terra at high effort; author Codex → Claude Opus) on the final diff, and
@@ -84,7 +89,8 @@ GitHub issues are the source of truth for work. Every agent session works **exac
       verdict is the latest `Automated review:` comment, its SHA must equal the current head, and a later `CHANGES`
       blocks the merge. CI is green, the branch is current with `main`, there are no conflicts, the final diff stays
       inside the issue's "Owns" paths, and no open PR overlaps it.
-   4. **Merge** with `gh pr merge <n> --squash --delete-branch --match-head-commit <sha>`, where `<sha>` is the reviewed
+   4. **Merge** with `gh pr merge <n> --squash --delete-branch --match-head-commit <sha> --subject "<short subject>"
+      --body "<brief description>"` (so no branch commit list or trailers land on `main`), where `<sha>` is the reviewed
       head (or the current head for a docs-only PR). Never merge red CI,
       push to `main`, force-push a shared branch or bypass branch protection.
    5. **A human merges** any PR (including mixed ones) that changes agent instructions (`CLAUDE.md`, `AGENTS.md`,
