@@ -102,9 +102,9 @@ public class ConnectBuyerTool implements Tool {
                         + "ask_connect_buyer.");
             }
             case NO_CONSENT -> {
-                return ToolResult.error("The farmer did not give a clear yes, so do not call. Unclear means no: say "
-                        + "sorry, you did not catch that, and ask once more with ask_connect_buyer. If the answer is "
-                        + "still unclear, say you will not call " + buyer.name() + " now.");
+                return ToolResult.error("The farmer did not give a clear yes, so do not call. Unclear means no: ask "
+                        + "once more with ask_connect_buyer, which speaks the question for you. If the answer is still "
+                        + "unclear, say you will not call " + buyer.name() + " now.");
             }
             case ENDED -> {
                 return ended();

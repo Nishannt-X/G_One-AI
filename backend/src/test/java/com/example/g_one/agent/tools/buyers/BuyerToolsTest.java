@@ -20,6 +20,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -39,7 +44,8 @@ class BuyerToolsTest {
 
     private final BuyerDirectory directory = new BuyerDirectory(JSON, new MandiCatalog(JSON));
     private final ConsoleBus bus = new ConsoleBus();
-    private final BuyerConsent consent = new BuyerConsent(bus);
+    private final MovableClock clock = new MovableClock();
+    private final BuyerConsent consent = new BuyerConsent(bus, clock);
     private final RecordingConnector connector = new RecordingConnector();
     private final FindBuyersTool find = new FindBuyersTool(directory, consent);
     private final AskConnectBuyerTool askTool = new AskConnectBuyerTool(directory, consent, this::answeringFor);
@@ -150,7 +156,11 @@ class BuyerToolsTest {
         suggestOnion();
         ToolResult r = ask("mehta-agro");
         assertThat(r.ok()).isTrue();
-        assertThat(r.content()).contains("Shall I call Mehta Agro Traders now? Please say yes or no.");
+        // The whole result is the line the brain speaks verbatim, in the call's language.
+        assertThat(r.content()).isEqualTo("क्या मैं अभी Mehta Agro Traders को फ़ोन करूँ? कृपया हाँ या ना बोलिए।");
+        Buyer mehta = directory.byId("mehta-agro").orElseThrow();
+        assertThat(AskConnectBuyerTool.question(mehta, FakeLeg.ENGLISH))
+                .isEqualTo("Shall I call Mehta Agro Traders now? Please say yes or no.");
         assertThat(ask("verma-grains").content()).contains("not suggested on this call");
         assertThat(ask("made-up").content()).contains("No buyer with that buyer_id");
     }
@@ -166,6 +176,35 @@ class BuyerToolsTest {
         assertThat(ask("mehta-agro").content()).contains("said something newer");
         older.current = false;
         assertThat(ask("mehta-agro").ok()).isFalse();
+    }
+
+    @Test
+    void aQuestionThatIsNeverSpokenRecordsNothing() {
+        suggestOnion();
+        assertThat(askUndelivered("mehta-agro").ok()).isTrue(); // the turn then ends in an apology instead
+        farmerSays("haan");
+        assertThat(connect("mehta-agro").content()).contains("not asked the farmer yet");
+        assertThat(connector.dials).isEmpty();
+    }
+
+    @Test
+    void aQuestionOvertakenBeforeItIsReturnedRecordsNothing() {
+        suggestOnion();
+        Answering asking = answering;
+        assertThat(askUndelivered("mehta-agro").ok()).isTrue();
+        heard("ruko, pehle bhav batao"); // the farmer speaks before the brain returns the question
+        asking.replied.run();
+        farmerSays("haan");
+        assertThat(connect("mehta-agro").content()).contains("not asked the farmer yet");
+
+        suggestOnion();
+        Answering superseded = answering;
+        assertThat(askUndelivered("mehta-agro").ok()).isTrue();
+        superseded.current = false; // the answer was superseded before the reply was returned
+        superseded.replied.run();
+        farmerSays("haan");
+        assertThat(connect("mehta-agro").content()).contains("not asked the farmer yet");
+        assertThat(connector.dials).isEmpty();
     }
 
     // ---- connect_buyer consent ----
@@ -349,6 +388,82 @@ class BuyerToolsTest {
     }
 
     @Test
+    void aNewerFarmerTurnBetweenConsentAndDialStopsTheDial() {
+        suggestOnion();
+        ask("mehta-agro");
+        Answering yes = farmerSays("haan");
+        assertThat(consent.tryConsume(ctx, yes, "mehta-agro")).isEqualTo(BuyerConsent.Decision.GRANTED);
+        heard("nahi nahi, ruko"); // heard before its respond starts, so the yes still looks current
+        assertThat(yes.current()).isTrue();
+        AtomicBoolean ran = new AtomicBoolean();
+        assertThat(consent.dialWhileLive(ctx, yes, () -> ran.getAndSet(true))).isEmpty();
+        assertThat(ran).isFalse();
+    }
+
+    @Test
+    void aCallWithADialInFlightIsNeverEvictedAndItsHangUpWaitsOnTheSameGuard() throws Exception {
+        CountDownLatch inDial = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        List<BuyerConnector.Dial> dials = new CopyOnWriteArrayList<>();
+        ConnectBuyerTool slow = new ConnectBuyerTool(directory, consent, new BuyerPhoneBook(PHONES), (c, d) -> {
+            dials.add(d);
+            inDial.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return BuyerConnector.Outcome.DIALING;
+        }, this::answeringFor);
+        suggestOnion();
+        ask("mehta-agro");
+        farmerSays("haan");
+        List<ToolResult> results = new CopyOnWriteArrayList<>();
+        Thread dialler = new Thread(() -> results.add(slow.invoke(args("{\"buyer_id\":\"mehta-agro\"}"), ctx)));
+        dialler.start();
+        assertThat(inDial.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // Long past the idle limit, and another call's event runs the sweep: the dialling call stays.
+        clock.advance(BuyerConsent.IDLE.plusHours(1));
+        CallContext other = ctx();
+        bus.publish(new ConsoleEvent.TurnHeard(other.callId(), 0, other.farmerLeg().id(), LegRole.FARMER, "hi-IN",
+                "namaste", 0, 0));
+        assertThat(consent.tracks(ctx.callId())).isTrue();
+
+        Thread hangUp = new Thread(() -> bus.publish(new ConsoleEvent.CallEnded(ctx.callId(), 0, 0, "hangup")));
+        hangUp.start();
+        hangUp.join(300);
+        assertThat(hangUp.isAlive()).as("the hang-up waits on the dialling call's own guard").isTrue();
+        assertThat(consent.ended(ctx.callId())).isFalse();
+        release.countDown();
+        dialler.join(5_000);
+        hangUp.join(5_000);
+        assertThat(hangUp.isAlive()).isFalse();
+        assertThat(results).singleElement().satisfies(r -> assertThat(r.ok()).isTrue());
+        assertThat(consent.ended(ctx.callId())).isTrue();
+        assertThat(slow.invoke(args("{\"buyer_id\":\"mehta-agro\"}"), ctx).content()).contains("call has ended");
+        assertThat(dials).hasSize(1);
+
+        // Ended and nothing in flight: kept as ended for a while, then dropped.
+        clock.advance(BuyerConsent.TOMBSTONE.minusSeconds(1));
+        assertThat(consent.tracks(ctx.callId())).isTrue();
+        clock.advance(Duration.ofSeconds(2));
+        assertThat(consent.tracks(ctx.callId())).isFalse();
+    }
+
+    @Test
+    void onlyAnIdleCallWithNothingInFlightIsDropped() {
+        suggestOnion();
+        clock.advance(BuyerConsent.IDLE.minusMinutes(1));
+        assertThat(consent.tracks(ctx.callId())).isTrue();
+        farmerSays("aur kya?"); // any event keeps the call alive
+        clock.advance(BuyerConsent.IDLE.minusMinutes(1));
+        assertThat(consent.tracks(ctx.callId())).isTrue();
+        clock.advance(Duration.ofMinutes(2));
+        assertThat(consent.tracks(ctx.callId())).isFalse();
+    }
+
+    @Test
     void aHangUpDuringTheDialWaitsAndNothingDialsAfterIt() throws Exception {
         CountDownLatch inDial = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -433,6 +548,7 @@ class BuyerToolsTest {
         private final CallId callId;
         private final Turn turn;
         volatile boolean current = true;
+        volatile Runnable replied;
 
         Answering(CallId callId, Turn turn) {
             this.callId = callId;
@@ -453,6 +569,34 @@ class BuyerToolsTest {
         public boolean current() {
             return current;
         }
+
+        @Override
+        public void onReplied(Runnable action) {
+            replied = action;
+        }
+    }
+
+    private static final class MovableClock extends Clock {
+        private volatile long millis = 1_700_000_000_000L;
+
+        void advance(Duration d) {
+            millis += d.toMillis();
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return Instant.ofEpochMilli(millis);
+        }
     }
 
     private Optional<AnsweringTurn> answeringFor(CallContext c) {
@@ -467,7 +611,19 @@ class BuyerToolsTest {
         assertThat(r.ok()).isTrue();
     }
 
+    /** ask_connect_buyer, and the brain then returns its question as the reply. */
     private ToolResult ask(String buyerId) {
+        Answering a = answering;
+        ToolResult r = askUndelivered(buyerId);
+        if (a != null && a.replied != null) {
+            a.replied.run();
+            a.replied = null;
+        }
+        return r;
+    }
+
+    /** ask_connect_buyer, but the brain has not returned (or never returns) its question. */
+    private ToolResult askUndelivered(String buyerId) {
         return askTool.invoke(JSON.createObjectNode().put("buyer_id", buyerId), ctx);
     }
 

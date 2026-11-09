@@ -91,9 +91,11 @@ public class FindBuyersTool implements Tool {
         }
         // Spelled-out ordinals and prices: the model's text goes to Timbre, which reads digits badly.
         out.append(" Recommend the first. For each, tell the farmer the name, place, listed range and language "
-                + "(never the buyer_id). Then call ask_connect_buyer for the one they want, ")
-                .append(matches.get(0).buyer().name()).append(" unless they say otherwise, and say its question. "
-                        + "Call connect_buyer only after the farmer answers that question.");
+                + "(never the buyer_id), and ask whether they want you to phone one. Do not call ask_connect_buyer "
+                + "in this reply: the farmer has to hear the buyers first. When the farmer picks one (")
+                .append(matches.get(0).buyer().name()).append(" unless they say otherwise), call ask_connect_buyer "
+                        + "for it; it speaks the yes-or-no question for you and ends that reply. Call connect_buyer "
+                        + "only after the farmer answers that question.");
         return ToolResult.ok(out.toString());
     }
 

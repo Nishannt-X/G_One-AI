@@ -13,6 +13,7 @@ import com.example.g_one.agent.llm.SpokenEnglish;
 import com.example.g_one.agent.llm.ToolCall;
 import com.example.g_one.agent.llm.ToolSpec;
 import com.example.g_one.agent.tools.EndCallTool;
+import com.example.g_one.agent.tools.buyers.AskConnectBuyerTool;
 import com.example.g_one.agent.tools.memory.ConfirmNameTool;
 import com.example.g_one.agent.tools.memory.ForgetMeTool;
 import com.example.g_one.agent.tools.memory.MemoryBlock;
@@ -62,7 +63,8 @@ import org.springframework.stereotype.Component;
  *       {@value #MAX_MODEL_CALLS} model calls, {@value #MAX_TOOL_CALLS_PER_TURN} tool calls ({@value #MAX_TOOL_CALLS_PER_RESPONSE} from one response) and {@link #TURN_DEADLINE} per turn,
  *       the last model call without tools so the model has to speak. Each tool call is published to the console as
  *       a redacted {@link ConsoleEvent.ToolCalled} ({@link ConsoleView}). A successful {@code forget_me} ends the
- *       turn with the fixed confirmation and no further model call.</li>
+ *       turn with the fixed confirmation and no further model call, and a successful {@code ask_connect_buyer} ends
+ *       it with the tool's fixed consent question, spoken verbatim.</li>
  * </ul>
  *
  * <p>The returning farmer's memory stays away from the model until they say yes to the name check: the model records
@@ -123,6 +125,13 @@ public class LlmAgentBrain implements AgentBrain {
 
         /** False once this answer is over (answered, timed out or failed) or a newer turn of the call is answered. */
         boolean current();
+
+        /**
+         * Runs {@code action} once, just before {@link #respond} returns, only when the reply it returns is the fixed
+         * line of the terminal {@code ask_connect_buyer} call that registered it. Never runs when the turn ends in an
+         * apology, times out or fails. A later registration replaces an earlier one.
+         */
+        void onReplied(Runnable action);
     }
 
     @Autowired
@@ -193,7 +202,11 @@ public class LlmAgentBrain implements AgentBrain {
         });
         try {
             Thread.ofVirtual().name("agent-turn").start(task);
-            return task.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
+            Reply reply = task.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
+            Runnable replied = turn.onReplied;
+            // Only the terminal consent question is a reply the tool's hook may act on; still current here.
+            if (replied != null && reply != null && reply == turn.terminalReply) replied.run();
+            return reply;
         } catch (TimeoutException e) {
             log.warn("Agent brain missed the {} ms turn deadline on call {}", deadline.toMillis(), ctx.callId());
         } catch (ExecutionException e) {
@@ -263,6 +276,11 @@ public class LlmAgentBrain implements AgentBrain {
             return !progress.over && clock.millis() <= progress.deadlineMs
                     && Long.valueOf(seq).equals(newestAnswer.get(callId));
         }
+
+        @Override
+        public void onReplied(Runnable action) {
+            progress.onReplied = action;
+        }
     }
 
     /**
@@ -279,6 +297,9 @@ public class LlmAgentBrain implements AgentBrain {
         final long deadlineMs;
         volatile boolean endCall;
         volatile boolean over;
+        /** The fixed reply of a terminal tool, and the hook a tool registered for it ({@link AnsweringTurn#onReplied}). */
+        volatile Reply terminalReply;
+        volatile Runnable onReplied;
 
         Progress(long deadlineMs) {
             this.deadlineMs = deadlineMs;
@@ -346,6 +367,13 @@ public class LlmAgentBrain implements AgentBrain {
                 if (ForgetMeTool.NAME.equals(tc.name()) && result.ok()) {
                     // The conversation so far may hold remembered content: no further model call sees it.
                     return forgotten(ctx.language(), turn.endCall);
+                }
+                if (AskConnectBuyerTool.NAME.equals(tc.name()) && result.ok()) {
+                    // The fixed consent question is the whole reply, verbatim: the model never rephrases it.
+                    String line = speakable(result.content());
+                    Reply asked = new Reply(line, ReplyLanguage.of(line, ctx.language(), languages), turn.endCall);
+                    turn.terminalReply = asked;
+                    return asked;
                 }
                 messages.add(ChatMessage.tool(tc.id(), toolMessage(result)));
             }
