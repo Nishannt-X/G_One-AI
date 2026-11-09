@@ -8,6 +8,7 @@ import com.example.g_one.agent.tools.mandi.MandiSource;
 import com.example.g_one.core.ConsoleBus;
 import com.example.g_one.core.ConsoleEvent;
 import com.example.g_one.core.LegRole;
+import com.example.g_one.core.TextToSpeech;
 import com.example.g_one.fakes.FakeLeg;
 import com.example.g_one.fakes.FakeLlm;
 import com.example.g_one.fakes.FakeSpeechToText;
@@ -19,6 +20,7 @@ import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A real {@link Mediator} against {@link FakeLlm}, the speech fakes and the bundled dated mandi sample (red onion,
@@ -34,6 +36,8 @@ public final class MediationFixture implements AutoCloseable {
     public final FakeLlm llm;
     public final FakeSpeechToText stt = new FakeSpeechToText(() -> 1_000L);
     public final FakeTextToSpeech tts = new FakeTextToSpeech();
+    /** While positive, each synthesis start fails (and counts down) before reaching {@link #tts}. */
+    public final AtomicInteger failingSpeaks = new AtomicInteger();
     public final ConsoleBus bus = new ConsoleBus();
     public final List<ConsoleEvent> events = new CopyOnWriteArrayList<>();
     /** Timers the mediator scheduled; nothing fires until {@link #fireTimers()}. */
@@ -47,7 +51,13 @@ public final class MediationFixture implements AutoCloseable {
                 new GOneProperties.Llm(llm.baseUrl(), FakeLlm.KEY, "fake-model", 5));
         MandiQuote quote = new MandiQuote(new MandiSource(props, JSON), new MandiCatalog(JSON));
         bus.subscribe(events::add);
-        mediator = new Mediator(stt, tts, new ChatClient(props, JSON), JSON, quote, bus, Runnable::run, () -> 2_000L,
+        TextToSpeech speech = (text, language, sampleRate, sink) -> {
+            if (failingSpeaks.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                throw new IllegalStateException("synthetic synthesis failure");
+            }
+            return tts.speak(text, language, sampleRate, sink);
+        };
+        mediator = new Mediator(stt, speech, new ChatClient(props, JSON), JSON, quote, bus, Runnable::run, () -> 2_000L,
                 Duration.ofSeconds(4), CONSENT_TIMEOUT, (delayMs, task) -> timers.add(task));
     }
 

@@ -106,14 +106,18 @@ final class PriceWhisper {
                 + SpokenEnglish.date(s.priceDate()) + ", a dated reference.");
     }
 
-    /** Converts a price per {@code from} into a price per {@code to}; empty for a unit we cannot convert. */
+    /**
+     * Converts a price per {@code from} into a price per {@code to}, exactly: no rounding, so the comparison sees the
+     * true value (44,999.96 per tonne is 4,499.996 per quintal, not 4,500). Every unit is a power of ten kilograms, so
+     * the division always terminates. Empty for a unit we cannot convert.
+     */
     static Optional<BigDecimal> inUnit(BigDecimal price, String from, String to) {
         Optional<BigDecimal> fromKg = kilos(from);
         Optional<BigDecimal> toKg = kilos(to);
         if (fromKg.isEmpty() || toKg.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(price.multiply(toKg.get()).divide(fromKg.get(), 2, RoundingMode.HALF_UP));
+        return Optional.of(price.multiply(toKg.get()).divide(fromKg.get()));
     }
 
     private static Optional<BigDecimal> kilos(String unit) {

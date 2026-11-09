@@ -22,6 +22,12 @@ final class MediationLines {
     static final String HINDI_NOT_TRANSLATED = "माफ़ कीजिए, मैं इसका अनुवाद नहीं कर पाई। कृपया फिर से बोलिए।";
     static final String ENGLISH_NOT_TRANSLATED = "Sorry, I could not translate that. Please say it again.";
 
+    /** Said to the speaker when their turn was withheld because it may hold a secret or could not be screened. */
+    static final String HINDI_WITHHELD = "माफ़ कीजिए, यह बात मैं आगे नहीं बता सकती। कृपया PIN, OTP या पासवर्ड जैसी "
+            + "निजी बातें छोड़कर फिर से बोलिए।";
+    static final String ENGLISH_WITHHELD = "Sorry, I can't pass that on. Please say it again without private details "
+            + "like a PIN, OTP or password.";
+
     /** Call-flow "Caution (fixed)": for a request for a PIN or OTP. */
     static final String HINDI_CAUTION_REQUEST = HINDI_WHISPER_OPENING
             + "पैसे लेने के लिए कभी PIN या OTP नहीं लगता। किसी को मत बताइए।";
@@ -76,6 +82,11 @@ final class MediationLines {
     /** Said to the speaker when their turn could not be translated, so they are never left wondering. */
     static String notTranslated(Language language) {
         return hindi(language) ? HINDI_NOT_TRANSLATED : ENGLISH_NOT_TRANSLATED;
+    }
+
+    /** Said to the speaker when their turn was withheld; nothing of it reached the console or the other leg. */
+    static String withheld(Language language) {
+        return hindi(language) ? HINDI_WITHHELD : ENGLISH_WITHHELD;
     }
 
     /** The fixed one-sentence caution for the farmer, opening included. */

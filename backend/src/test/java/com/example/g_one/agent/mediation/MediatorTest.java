@@ -18,6 +18,7 @@ import com.example.g_one.fakes.FakeLeg;
 import com.example.g_one.fakes.FakeSpeechToText;
 import com.example.g_one.fakes.FakeTextToSpeech;
 import com.example.g_one.memory.SecretScrubber;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
@@ -185,6 +186,64 @@ class MediatorTest {
         assertThat(f.events(ConsoleEvent.TurnTranslated.class)).isEmpty();
     }
 
+    @Test
+    void aTurnThatStartedBeforeTheBuyersYesIsDroppedEvenIfItEndsAfterIt() {
+        join();
+        buyer.finishPlayback();
+        farmerSays.emitSpeechStart(); // the farmer starts talking while consent is still open
+        buyerSays.say("Yes");
+        farmer.finishPlayback();
+        farmerSays.emitTurn("पहले मेरी बात सुनो"); // its final transcript arrives after the yes
+
+        assertThat(f.llm.requests()).isEmpty();
+        assertThat(f.events(ConsoleEvent.TurnTranslated.class)).isEmpty();
+        assertThat(f.events(ConsoleEvent.TurnHeard.class)).extracting(ConsoleEvent.TurnHeard::role)
+                .containsExactly(LegRole.BUYER); // only the buyer's yes
+        assertThat(buyer.played()).hasSize(frames(INTRO));
+
+        // The farmer's next utterance, started after the yes, is relayed.
+        f.llm.replyText(NO_CAUTION).replyText(translation("Hello", "Hello"));
+        farmerSays.say("नमस्ते");
+        assertThat(f.events(ConsoleEvent.TurnTranslated.class)).hasSize(1);
+    }
+
+    @Test
+    void anIntroductionThatCouldNotBePlayedIsTriedOnceMoreBeforeConsentCounts() {
+        f.failingSpeaks.set(1);
+        join();
+        // The first attempt failed to synthesise; the buyer hears the retry, and nothing before it is heard counts.
+        assertThat(f.tts.requests()).extracting(FakeTextToSpeech.Request::text).containsExactly(INTRO);
+        assertThat(buyer.played()).hasSize(frames(INTRO));
+        buyerSays.say("Yes"); // still playing: does not count
+        assertThat(f.tts.requests()).hasSize(1);
+
+        buyer.finishPlayback();
+        buyerSays.say("Yes");
+        assertThat(f.tts.requests()).extracting(FakeTextToSpeech.Request::text).containsExactly(INTRO, JOINED);
+        assertThat(ended).hasValue(0);
+    }
+
+    @Test
+    void anIntroductionThatFailsTwiceIsADeclineAndAYesCannotAcceptIt() {
+        f.failingSpeaks.set(2);
+        join();
+        buyerSays.say("Yes"); // the buyer never heard the disclosure, so this is not consent
+        assertThat(f.events(ConsoleEvent.TurnHeard.class)).isEmpty();
+
+        String apology = MediationLines.ENGLISH_BUYER_APOLOGY;
+        String told = MediationLines.HINDI_BUYER_DECLINED;
+        assertThat(f.tts.requests()).extracting(FakeTextToSpeech.Request::text).containsExactly(apology);
+        buyer.finishPlayback();
+        assertThat(f.tts.requests()).extracting(FakeTextToSpeech.Request::text).containsExactly(apology, told);
+        farmer.finishPlayback();
+
+        assertThat(buyer.hungUpByUs()).isTrue();
+        assertThat(ended).hasValue(1);
+        assertThat(f.events(ConsoleEvent.LegEnded.class)).singleElement()
+                .satisfies(e -> assertThat(e.reason()).isEqualTo("no_consent"));
+        assertThat(f.llm.requests()).isEmpty();
+    }
+
     // ---- turns ----
 
     @Test
@@ -298,6 +357,22 @@ class MediatorTest {
     }
 
     @Test
+    void anOfferPerTonneJustBelowTheReferenceIsComparedWithoutRounding() {
+        start();
+        f.llm.replyText(NO_CAUTION).replyText(translation("ठीक", "ठीक"))
+                .replyText("{\"status\":\"clear\",\"commodity\":\"onion\",\"price\":44999.96,\"unit\":\"tonne\"}")
+                .replyText(translation("कम", "कम"));
+        buyerSays.say("Forty four thousand nine hundred ninety nine rupees ninety six paise a tonne.");
+
+        // 44,999.96 per tonne is 4,499.996 per quintal: below 4,500, though two-decimal rounding would make it 4,500.
+        assertThat(PriceWhisper.inUnit(new BigDecimal("44999.96"), "tonne", "quintal")).hasValueSatisfying(
+                v -> assertThat(v).isEqualByComparingTo("4499.996"));
+        assertThat(f.sentData(3).path("text").asText()).startsWith(
+                "that offer of four thousand four hundred ninety-nine rupees per quintal is below the AGMARKNET listing "
+                        + "of four thousand five hundred rupees");
+    }
+
+    @Test
     void anUnclearOfferOrAnotherCropGetsNoWhisper() {
         start();
         f.llm.replyText(NO_CAUTION).replyText(translation("गेहूँ?", "गेहूँ?"))
@@ -368,11 +443,11 @@ class MediatorTest {
     }
 
     @Test
-    void aSecretTheFarmerSaysAloudIsRedactedEverywhereAndEarnsTheFixedCaution() {
+    void aSecretTheRedactorRemovesNeverReachesTheConsoleTheModelsOrTheBuyer() {
         start();
         String secret = "482913";
         String redacted = "मेरा OTP " + SecretScrubber.REMOVED + " है।";
-        f.llm.replyText("{\"status\":\"ok\",\"secretRequest\":false,\"secretShare\":true}")
+        f.llm.replyText(NO_CAUTION)
                 .replyText(translation("My OTP is [number removed].", "My OTP is number removed."));
         farmerSays.say("मेरा OTP " + secret + " है।");
 
@@ -383,23 +458,15 @@ class MediatorTest {
         assertThat(f.sentData(1).path("text").asText()).isEqualTo(redacted);
         assertThat(f.llm.requests()).hasSize(2);
         assertThat(f.llm.requests()).allSatisfy(r -> assertThat(r.toString()).doesNotContain(secret));
-        assertThat(f.events(ConsoleEvent.TurnTranslated.class)).singleElement()
-                .satisfies(t -> assertThat(t.text()).doesNotContain(secret));
-        assertThat(f.events(ConsoleEvent.WhisperSent.class)).isEmpty(); // after the turn reached the buyer
-        buyer.finishPlayback();
-
-        ConsoleEvent.WhisperSent sent = f.events(ConsoleEvent.WhisperSent.class).getFirst();
-        assertThat(sent.kind()).isEqualTo(WhisperKind.CAUTION);
-        assertThat(sent.text()).isEqualTo(MediationLines.HINDI_CAUTION_SHARE);
+        assertThat(f.events).allSatisfy(e -> assertThat(e.toString()).doesNotContain(secret));
         assertThat(tts()).allSatisfy(r -> assertThat(r.text()).doesNotContain(secret));
-        assertThat(f.events(ConsoleEvent.AssistantSaid.class)).singleElement()
-                .satisfies(e -> assertThat(e.role()).isEqualTo(LegRole.BUYER));
+        assertThat(buyerPlayed()).hasSize(frames("My OTP is number removed."));
     }
 
     @Test
     void aCodeSpokenAsDigitWordsAfterAPinLabelIsRedacted() {
         start();
-        f.llm.replyText("{\"status\":\"ok\",\"secretRequest\":false,\"secretShare\":true}")
+        f.llm.replyText(NO_CAUTION)
                 .replyText(translation("मेरा PIN [number removed] है।", "मेरा PIN नंबर हटाया गया है।"))
                 .replyText(NO_OFFER);
         buyerSays.say("My PIN is four eight two nine.");
@@ -416,28 +483,53 @@ class MediatorTest {
     }
 
     @Test
-    void aSecretTheRedactorMissesIsWithheldEntirely() {
+    void aPasswordTheRedactorCannotRemoveNeverReachesTheConsoleOrTheOtherLeg() {
         start();
+        String said = "my password is mango";
+        assertThat(TurnRedactor.redact(said).changed()).isFalse(); // the redactor cannot recognise it
         f.llm.replyText("{\"status\":\"ok\",\"secretRequest\":false,\"secretShare\":true}");
-        farmerSays.say("मेरा पासवर्ड टाइगर है।");
+        farmerSays.say(said);
 
-        assertThat(f.llm.requests()).hasSize(1); // no translation: nothing of the turn reaches the buyer
-        assertThat(f.events(ConsoleEvent.TurnTranslated.class)).isEmpty();
-        assertThat(tts()).extracting(FakeTextToSpeech.Request::text)
-                .containsExactly(HOLD, MediationLines.HINDI_CAUTION_SHARE);
-        assertThat(buyerPlayed()).hasSize(frames(HOLD));
+        assertWithheld("mango");
     }
 
     @Test
-    void whenTheClassifierFailsTheRedactedTextIsRelayedNeverTheRawOne() {
+    void whenTheClassifierFailsTheTurnIsWithheld() {
         start();
-        f.llm.replyText("not json").replyText(translation("My card is [number removed].", "My card is number removed."));
-        farmerSays.say("मेरा कार्ड 4111 1111 1111 1111 है।");
+        f.llm.replyText("not json");
+        farmerSays.say("my password is mango");
 
-        assertThat(f.sentData(1).path("text").asText()).doesNotContain("4111").contains(SecretScrubber.REMOVED);
-        assertThat(f.events(ConsoleEvent.TurnHeard.class)).singleElement()
-                .satisfies(e -> assertThat(e.text()).doesNotContain("4111"));
-        assertThat(buyerPlayed()).hasSize(frames("My card is number removed."));
+        assertWithheld("mango");
+    }
+
+    @Test
+    void aSecretShareIsWithheldEvenWhenTheRedactorRemovedAnUnrelatedNumber() {
+        start();
+        String said = "मेरा खाता 000111222333 है और पासवर्ड mango है";
+        assertThat(TurnRedactor.redact(said).changed()).isTrue(); // the account number was removed, the password not
+        f.llm.replyText("{\"status\":\"ok\",\"secretRequest\":false,\"secretShare\":true}");
+        farmerSays.say(said);
+
+        assertWithheld("mango");
+    }
+
+    /** Only the classifier ran; the console and the buyer got nothing; the farmer was asked to say it again. */
+    private void assertWithheld(String secret) {
+        assertThat(f.llm.requests()).hasSize(1); // no translation, no read-out
+        assertThat(f.events(ConsoleEvent.TurnHeard.class)).isEmpty();
+        assertThat(f.events(ConsoleEvent.TurnTranslated.class)).isEmpty();
+        assertThat(f.events(ConsoleEvent.WhisperSent.class)).isEmpty();
+        assertThat(f.events).allSatisfy(e -> assertThat(e.toString()).doesNotContain(secret));
+        assertThat(buyerPlayed()).isEmpty();
+        assertThat(tts()).extracting(FakeTextToSpeech.Request::text).containsExactly(MediationLines.HINDI_WITHHELD);
+        assertThat(farmerPlayed()).hasSize(frames(MediationLines.HINDI_WITHHELD));
+
+        // The floor is free again: the next clean turn goes through.
+        farmer.finishPlayback();
+        f.llm.replyText(NO_CAUTION).replyText(translation("Twenty quintals.", "Twenty quintals."));
+        farmerSays.say("बीस क्विंटल।");
+        assertThat(f.events(ConsoleEvent.TurnHeard.class)).hasSize(1);
+        assertThat(buyerPlayed()).hasSize(frames("Twenty quintals."));
     }
 
     @Test
@@ -484,9 +576,9 @@ class MediatorTest {
         buyerSays.say("two");
         buyerSays.say("three");
 
-        // Only the first turn is handled while the farmer still hears it.
+        // Only the first turn is handled while the farmer still hears it; the others are not published until screened.
         assertThat(f.llm.requests()).hasSize(3);
-        assertThat(f.events(ConsoleEvent.TurnHeard.class)).hasSize(3);
+        assertThat(f.events(ConsoleEvent.TurnHeard.class)).hasSize(1);
         assertThat(tts()).extracting(FakeTextToSpeech.Request::text).containsExactly("एक");
 
         farmer.finishPlayback();
@@ -494,6 +586,7 @@ class MediatorTest {
         farmer.finishPlayback();
 
         assertThat(f.llm.requests()).hasSize(9);
+        assertThat(f.events(ConsoleEvent.TurnHeard.class)).hasSize(3);
         assertThat(f.events(ConsoleEvent.TurnTranslated.class)).extracting(ConsoleEvent.TurnTranslated::text)
                 .containsExactly("एक", "दो", "तीन");
         assertThat(List.of(f.sentData(1), f.sentData(4), f.sentData(7))).extracting(d -> d.path("text").asText())

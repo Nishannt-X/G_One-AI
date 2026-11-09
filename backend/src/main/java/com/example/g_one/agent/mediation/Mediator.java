@@ -36,6 +36,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,20 +51,24 @@ import org.slf4j.LoggerFactory;
  * ({@link NameCheckReply#isClearYes(String)}: anything it does not recognise is a no). On a yes the farmer hears the
  * fixed "buyer is on the line" line and mediation starts. On a no, an unclear answer or no answer within the consent
  * timeout, the buyer hears an apology, the farmer hears that the buyer did not agree, and the buyer leg is hung up.
- * Nothing either side says before the yes is relayed.
+ * Nothing either side says before the yes is relayed, and a turn whose speech started before the yes is dropped even
+ * when its final transcript arrives after it. If the introduction cannot be synthesised or played, it is tried once
+ * more; a second failure is a decline, since a buyer who never heard the disclosure cannot agree to it.
  *
  * <p>Per turn, in this order:
  * <ol>
- *   <li>Redact secrets ({@link TurnRedactor}) from the transcript. Everything after this step, the console included,
- *       sees only the redacted text. A turn that cannot be redacted is withheld.</li>
- *   <li>Publish {@code turn_heard}.</li>
- *   <li>Background: one caution classifier call ({@link CautionCheck}); the translation into the listener's language
- *       ({@link Translator}; same language means the transcript is re-voiced verbatim, with no model call); for a buyer
- *       turn, the offer read-out and the price comparison ({@link PriceWhisper}), whose English body is translated for
- *       the farmer. Cautions are fixed sentences per language ({@link MediationLines#caution}), never translated by the
- *       model, and nothing said is ever copied into a whisper. When the classifier hears a secret said aloud but the
- *       redactor found nothing to remove (a password, say), the turn is withheld: it is not relayed at all. If the
- *       classifier fails, the redacted text is relayed, never the raw one.</li>
+ *   <li>Redact secrets ({@link TurnRedactor}) from the transcript. Everything after this step sees only the redacted
+ *       text. A turn that cannot be redacted is withheld.</li>
+ *   <li>Background: one caution classifier call ({@link CautionCheck}) on the redacted text. Fail closed: when the
+ *       classifier fails, or still hears a secret said aloud (a password the redactor cannot recognise, say), the turn
+ *       is withheld. Nothing of it is published or relayed, and the speaker hears a fixed line asking them to say it
+ *       again without private details ({@link MediationLines#withheld}).</li>
+ *   <li>Only for a turn that passed: the translation into the listener's language ({@link Translator}; same language
+ *       means the transcript is re-voiced verbatim, with no model call); for a buyer turn, the offer read-out and the
+ *       price comparison ({@link PriceWhisper}), whose English body is translated for the farmer. Cautions are fixed
+ *       sentences per language ({@link MediationLines#caution}), never translated by the model, and nothing said is
+ *       ever copied into a whisper.</li>
+ *   <li>Publish {@code turn_heard} with the redacted text.</li>
  *   <li>Speak, one step at a time. A threat or secret request from the buyer: the buyer hears "One moment please" once
  *       and the farmer hears the caution first, then the translated turn. Otherwise the translated turn goes to the
  *       listener first, and a price whisper (after a buyer turn) or a caution about a secret the farmer said aloud
@@ -178,6 +183,10 @@ public final class Mediator implements CallPipeline.Mediation {
         private final Deque<Step> steps = new ArrayDeque<>();
         /** The newest utterance on each leg, for barge-in. */
         private final Map<LegRole, Utterance> speaking = new EnumMap<>(LegRole.class);
+        /** The phase each leg's current utterance started in (its first speech start), until its final turn. */
+        private final Map<LegRole, Phase> startedIn = new EnumMap<>(LegRole.class);
+        /** How many times the introduction was tried; it is retried once when it could not be played. */
+        private int introAttempts;
         /** True from the moment a turn is taken off {@link #waiting} until its last step finished. */
         private boolean busy;
         /** The step being waited on; null between steps. */
@@ -228,9 +237,7 @@ public final class Mediator implements CallPipeline.Mediation {
             publish(ConsoleEvent.LegJoined.of(buyer, now()));
             // Only the buyer hears the introduction. The floor stays taken until the consent is settled.
             busy = true;
-            Language buyerLanguage = buyer.language();
-            steps.add(said(LegRole.BUYER, MediationLines.buyerIntro(buyerLanguage, farmer.language()), buyerLanguage,
-                    this::introHeard));
+            introduce();
             nextStep();
             background("open buyer speech-to-text", () -> {
                 SttSession opened = null;
@@ -271,9 +278,30 @@ public final class Mediator implements CallPipeline.Mediation {
 
         // ---- buyer consent ----
 
-        /** In the mailbox: the introduction was heard, cleared or timed out; the buyer's answer counts from now. */
-        private void introHeard() {
+        /** In the mailbox: queues the introduction for the buyer. */
+        private void introduce() {
+            introAttempts++;
+            Language buyerLanguage = buyer.language();
+            steps.add(said(LegRole.BUYER, MediationLines.buyerIntro(buyerLanguage, farmer.language()), buyerLanguage,
+                    this::introFinished));
+        }
+
+        /**
+         * In the mailbox: the introduction finished. Only when the buyer heard it does their answer count from now.
+         * Otherwise it is tried once more, and a second failure is a decline.
+         */
+        private void introFinished(boolean heard) {
             if (ended || phase != Phase.CONSENT) {
+                return;
+            }
+            if (!heard) {
+                if (introAttempts < 2) {
+                    log.warn("The introduction could not be played on buyer leg {} of call {}; trying once more",
+                            buyer.id(), callId);
+                    introduce(); // the step that just finished starts it
+                } else {
+                    decline("introduction not heard");
+                }
                 return;
             }
             introDone = true;
@@ -300,6 +328,8 @@ public final class Mediator implements CallPipeline.Mediation {
                 return;
             }
             if (NameCheckReply.isClearYes(turn.text())) {
+                // Safe to show: the strict allowlist only passes a plain yes. Other answers are never published.
+                publish(ConsoleEvent.TurnHeard.of(callId, turn, now()));
                 accept();
             } else {
                 decline("no or unclear answer");
@@ -327,7 +357,7 @@ public final class Mediator implements CallPipeline.Mediation {
             Language farmerLanguage = farmer.language();
             steps.add(said(LegRole.BUYER, MediationLines.buyerApology(buyerLanguage), buyerLanguage, null));
             steps.add(said(LegRole.FARMER, MediationLines.buyerDeclined(farmerLanguage), farmerLanguage,
-                    () -> cleanUp(() -> {
+                    heard -> cleanUp(() -> {
                         try {
                             buyer.hangup(); // its end listener ends mediation and hands the farmer back
                         } catch (RuntimeException e) {
@@ -344,6 +374,8 @@ public final class Mediator implements CallPipeline.Mediation {
             if (ended) {
                 return;
             }
+            // The utterance belongs to the phase its speech started in; later starts of the same utterance don't move it.
+            startedIn.putIfAbsent(role, phase);
             if (phase != Phase.MEDIATING) {
                 if (phase == Phase.CONSENT && role == LegRole.BUYER) {
                     answerAfterIntro = introDone; // no barge-in: the buyer must hear the whole introduction
@@ -362,9 +394,17 @@ public final class Mediator implements CallPipeline.Mediation {
             }
         }
 
-        /** In the mailbox. Secrets are redacted here, before the console, the models or the other leg see the turn. */
+        /**
+         * In the mailbox. Secrets are redacted here, before the models or the other leg see the turn. Nothing is
+         * published yet: {@code turn_heard} goes out only once the classifier passed the turn ({@link #stepsReady}).
+         */
         private void turnHeard(Turn raw) {
-            if (ended || raw.text().isBlank()) {
+            if (ended) {
+                return;
+            }
+            // No speech start seen in this mediation (it started before the mediator took over): treat as unbound.
+            Phase spokenIn = startedIn.remove(raw.role());
+            if (raw.text().isBlank()) {
                 return;
             }
             TurnRedactor.Redacted redacted;
@@ -377,7 +417,6 @@ public final class Mediator implements CallPipeline.Mediation {
             }
             Turn turn = new Turn(raw.legId(), raw.role(), raw.language(), redacted.text(), raw.startedMs(),
                     raw.endedMs());
-            publish(ConsoleEvent.TurnHeard.of(callId, turn, now()));
             switch (phase) {
                 case CONSENT -> {
                     if (turn.role() == LegRole.BUYER) {
@@ -389,7 +428,13 @@ public final class Mediator implements CallPipeline.Mediation {
                 case DECLINING -> log.info("A {} turn on call {} after the buyer declined is not relayed",
                         turn.role().wire(), callId);
                 case MEDIATING -> {
-                    waiting.addLast(new Heard(turn, redacted.changed()));
+                    if (spokenIn != Phase.MEDIATING) {
+                        // Started before the buyer's yes (or before the mediator saw it start): never relayed.
+                        log.info("Dropping a {} turn on call {} whose speech started before mediation",
+                                turn.role().wire(), callId);
+                        return;
+                    }
+                    waiting.addLast(new Heard(turn));
                     next();
                 }
             }
@@ -403,11 +448,11 @@ public final class Mediator implements CallPipeline.Mediation {
             busy = true;
             Heard turn = waiting.pollFirst();
             boolean started = background("prepare turn", () -> {
-                List<Step> planned = List.of();
+                Prepared planned = Prepared.NOTHING;
                 try {
                     planned = prepare(turn);
                 } finally {
-                    List<Step> p = planned;
+                    Prepared p = planned;
                     mailbox.post(() -> stepsReady(p));
                 }
             });
@@ -417,10 +462,12 @@ public final class Mediator implements CallPipeline.Mediation {
         }
 
         /**
-         * Background: everything the model has to say about one redacted turn, turned into steps. Model trouble never
-         * throws: no caution, no price whisper, and an apology to the speaker instead of a guessed translation.
+         * Background: everything the model has to say about one redacted turn, turned into steps. The classifier runs
+         * first and fails closed: when it fails or still hears a secret said aloud, the turn is withheld and the
+         * speaker only hears the fixed "say it again without private details" line. Other model trouble never throws:
+         * no price whisper, and an apology to the speaker instead of a guessed translation.
          */
-        private List<Step> prepare(Heard heard) {
+        private Prepared prepare(Heard heard) {
             Turn turn = heard.turn();
             LegRole speaker = turn.role();
             LegRole listener = speaker.other();
@@ -428,16 +475,18 @@ public final class Mediator implements CallPipeline.Mediation {
             Language to = leg(listener).language();
             Language farmerLanguage = farmer.language();
 
-            Set<Caution> found = cautions.check(turn.text(), speaker, from.code());
-            // A secret said aloud that the redactor could not find (a password, a code in unknown words): withhold the
-            // whole turn rather than relay the secret.
-            boolean withheld = found.contains(Caution.SECRET_SHARE) && !heard.redacted();
-            if (withheld) {
-                log.info("A {} turn on call {} held a secret the redactor missed; it is not relayed", speaker.wire(),
-                        callId);
+            Optional<Set<Caution>> screened = cautions.check(turn.text(), speaker, from.code());
+            if (screened.isEmpty() || screened.get().contains(Caution.SECRET_SHARE)) {
+                // Decided by the classifier alone, never by whether the redactor removed something: a turn that could
+                // not be screened, or that still holds a secret (a password, a code in unknown words), goes nowhere.
+                log.info("A {} turn on call {} is withheld: {}", speaker.wire(), callId,
+                        screened.isEmpty() ? "screening failed" : "a secret is still in it");
+                Language own = leg(speaker).language();
+                return new Prepared(null, List.of(said(speaker, MediationLines.withheld(own), own)));
             }
-            Optional<Translation> translation = withheld ? Optional.empty() : translator.translate(turn.text(), from, to);
-            Optional<String> priceBody = speaker == LegRole.BUYER && !withheld
+            Set<Caution> found = screened.get();
+            Optional<Translation> translation = translator.translate(turn.text(), from, to);
+            Optional<String> priceBody = speaker == LegRole.BUYER
                     ? prices.whisperFor(turn.text(), from.code()) : Optional.empty();
 
             List<Step> before = new ArrayList<>();
@@ -461,7 +510,7 @@ public final class Mediator implements CallPipeline.Mediation {
             }
             if (translation.isPresent()) {
                 plan.add(translated(turn, listener, to, translation.get()));
-            } else if (!withheld) {
+            } else {
                 log.warn("Could not translate a {} turn on call {}; asking the speaker to repeat", speaker.wire(), callId);
                 Language own = leg(speaker).language();
                 plan.add(said(speaker, MediationLines.notTranslated(own), own));
@@ -472,7 +521,7 @@ public final class Mediator implements CallPipeline.Mediation {
                 }
                 plan.addAll(after);
             }
-            return plan;
+            return new Prepared(turn, plan);
         }
 
         /** Background: the price whisper from our own English wording, translated, with the fixed opening. */
@@ -515,20 +564,26 @@ public final class Mediator implements CallPipeline.Mediation {
             return said(role, line, language, null);
         }
 
-        /** @param onDone runs in the mailbox once the line was heard, cleared, interrupted or timed out; may be null */
-        private Step said(LegRole role, String line, Language language, Runnable onDone) {
+        /**
+         * @param onDone runs in the mailbox once the line was heard, cleared, interrupted, failed or timed out, with
+         *     whether it was played; may be null
+         */
+        private Step said(LegRole role, String line, Language language, Consumer<Boolean> onDone) {
             return new Step(role, line, language, true, () -> publish(new ConsoleEvent.AssistantSaid(callId, now(),
                     leg(role).id(), role, language.code(), line)), onDone);
         }
 
         // ---- speaking ----
 
-        /** In the mailbox. */
-        private void stepsReady(List<Step> planned) {
+        /** In the mailbox: the console sees a turn only now, after it passed screening; a withheld turn never. */
+        private void stepsReady(Prepared prepared) {
             if (ended) {
                 return;
             }
-            steps.addAll(planned);
+            if (prepared.passed() != null) {
+                publish(ConsoleEvent.TurnHeard.of(callId, prepared.passed(), now()));
+            }
+            steps.addAll(prepared.steps());
             nextStep();
         }
 
@@ -562,7 +617,10 @@ public final class Mediator implements CallPipeline.Mediation {
                         frame -> mailbox.post(() -> framePlayed(u, frame)));
             } catch (RuntimeException e) {
                 log.warn("Speech synthesis failed to start on {} leg of call {}", u.step.to().wire(), callId, e);
-                mailbox.post(() -> finish(u));
+                mailbox.post(() -> {
+                    u.failed = true;
+                    finish(u);
+                });
                 return;
             }
             mailbox.post(() -> synthesisStarted(u, started));
@@ -587,6 +645,7 @@ public final class Mediator implements CallPipeline.Mediation {
                 leg(u.step.to()).play(frame);
                 u.queuedMs += frame.durationMs();
             } catch (RuntimeException e) {
+                u.failed = true;
                 log.warn("Playing audio failed on {} leg of call {}", u.step.to().wire(), callId, e);
             }
         }
@@ -597,7 +656,8 @@ public final class Mediator implements CallPipeline.Mediation {
                 return;
             }
             u.synthesis = null;
-            if (error != null) {
+            if (error != null || u.queuedMs == 0) {
+                u.failed = true; // nothing (or not all) of it was synthesised
                 log.warn("Speech synthesis failed on {} leg of call {}", u.step.to().wire(), callId, error);
             }
             CompletableFuture<PlaybackOutcome> heard;
@@ -606,7 +666,12 @@ public final class Mediator implements CallPipeline.Mediation {
             } catch (RuntimeException e) {
                 heard = CompletableFuture.failedFuture(e);
             }
-            heard.whenComplete((outcome, failure) -> mailbox.post(() -> finish(u)));
+            heard.whenComplete((outcome, failure) -> mailbox.post(() -> {
+                if (failure != null || outcome != PlaybackOutcome.PLAYED) {
+                    u.failed = true;
+                }
+                finish(u);
+            }));
             long waitMs = u.queuedMs + graceMs;
             try {
                 delays.schedule(waitMs, () -> mailbox.post(() -> {
@@ -631,7 +696,7 @@ public final class Mediator implements CallPipeline.Mediation {
             cancelLater(u.synthesis);
             u.synthesis = null;
             if (u.step.onDone() != null && !ended) {
-                u.step.onDone().run();
+                u.step.onDone().accept(!u.failed);
             }
             if (current == u) {
                 current = null;
@@ -775,13 +840,23 @@ public final class Mediator implements CallPipeline.Mediation {
      *
      * @param waitForIt true when the next step waits until this one was heard
      * @param announce publishes the console event as the step starts
-     * @param onDone runs in the call's mailbox when the step finishes (any way but the end of mediation); may be null
+     * @param onDone runs in the call's mailbox when the step finishes (any way but the end of mediation), with whether
+     *     it was played in full; may be null
      */
     private record Step(LegRole to, String text, Language language, boolean waitForIt, Runnable announce,
-                        Runnable onDone) {}
+                        Consumer<Boolean> onDone) {}
 
-    /** A redacted turn; {@code redacted} is true when the redactor removed something from it. */
-    private record Heard(Turn turn, boolean redacted) {}
+    /** A redacted turn waiting for the floor; not published until it passed screening. */
+    private record Heard(Turn turn) {}
+
+    /**
+     * What to do with one turn.
+     *
+     * @param passed the redacted turn to publish as {@code turn_heard}, or null when it was withheld
+     */
+    private record Prepared(Turn passed, List<Step> steps) {
+        static final Prepared NOTHING = new Prepared(null, List.of());
+    }
 
     /** Consent first, then mediation; declining ends the buyer leg. */
     private enum Phase { CONSENT, MEDIATING, DECLINING }
@@ -792,6 +867,8 @@ public final class Mediator implements CallPipeline.Mediation {
         Synthesis synthesis;
         long queuedMs;
         boolean finished;
+        /** True when synthesis or playback failed, or the audio was cleared before it was heard. */
+        boolean failed;
 
         Utterance(Step step) {
             this.step = step;
