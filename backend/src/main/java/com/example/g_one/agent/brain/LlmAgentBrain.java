@@ -38,10 +38,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +74,10 @@ import org.springframework.stereotype.Component;
  * <p>The reply language follows the script of the model's answer ({@link ReplyLanguage}), so a farmer who switches to
  * English gets English. Neither method throws: a model failure, a loop that never answers or any other error becomes
  * the spoken apology in the farmer's language. Logs never contain the prompt, the farmer's words or the API key.
+ *
+ * <p>While a tool runs, {@link #answering(CallContext)} tells it which farmer turn this {@link #respond} is answering
+ * and whether that answer is still current, so a tool that acts on the farmer's own words (such as
+ * {@code connect_buyer}) reads the turn it was called for, not whatever the farmer said last.
  */
 @Component
 public class LlmAgentBrain implements AgentBrain {
@@ -102,6 +108,22 @@ public class LlmAgentBrain implements AgentBrain {
     private final Clock clock;
     private final Duration deadline;
     private final PromptTemplate system = PromptTemplate.load(PromptTemplate.ASSISTANT_SYSTEM);
+    /** The farmer turn the tool calls on this worker thread are made for; unset outside a {@link #respond}. */
+    private static final ThreadLocal<AnsweringTurn> ANSWERING = new ThreadLocal<>();
+    private static final AtomicLong ANSWER_SEQ = new AtomicLong();
+    /** Per call, the newest {@link #respond} still running; an older one is superseded. */
+    private final Map<CallId, Long> newestAnswer = new ConcurrentHashMap<>();
+
+    /** The farmer turn a tool call is being made for. */
+    public interface AnsweringTurn {
+        CallId callId();
+
+        /** The farmer turn being answered. */
+        Turn turn();
+
+        /** False once this answer is over (answered, timed out or failed) or a newer turn of the call is answered. */
+        boolean current();
+    }
 
     @Autowired
     public LlmAgentBrain(ChatClient chat, List<Tool> tools, MemoryGate gate, FixedLines lines, FallbackLines fallback,
@@ -158,7 +180,17 @@ public class LlmAgentBrain implements AgentBrain {
     @Override
     public Reply respond(CallContext ctx, List<Line> history, Turn latest) {
         Progress turn = new Progress(clock.millis() + deadline.toMillis());
-        FutureTask<Reply> task = new FutureTask<>(() -> converse(ctx, history, latest, turn));
+        long seq = ANSWER_SEQ.incrementAndGet();
+        newestAnswer.put(ctx.callId(), seq);
+        AnsweringTurn answering = latest == null ? null : new Answering(ctx.callId(), latest, seq, turn);
+        FutureTask<Reply> task = new FutureTask<>(() -> {
+            ANSWERING.set(answering);
+            try {
+                return converse(ctx, history, latest, turn);
+            } finally {
+                ANSWERING.remove();
+            }
+        });
         try {
             Thread.ofVirtual().name("agent-turn").start(task);
             return task.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
@@ -182,6 +214,7 @@ public class LlmAgentBrain implements AgentBrain {
             // Whatever happened, the worker stops at its next step, and an unanswered name check counts as no.
             turn.over = true;
             task.cancel(true);
+            newestAnswer.remove(ctx.callId(), seq);
             gate.closeNameCheck(ctx);
         }
         return turn.endCall ? goodbye(ctx.language()) : apology(ctx.language());
@@ -190,6 +223,46 @@ public class LlmAgentBrain implements AgentBrain {
     /** Drops this call's per-call state. The pipeline calls it at hang-up, after reading {@link #memoryState}. */
     public void callEnded(CallId callId) {
         gate.end(callId);
+        newestAnswer.remove(callId);
+    }
+
+    /**
+     * The farmer turn the calling tool runs for, when it runs inside {@link #respond} for {@code ctx}'s call; empty
+     * anywhere else.
+     */
+    public static Optional<AnsweringTurn> answering(CallContext ctx) {
+        AnsweringTurn a = ANSWERING.get();
+        return a != null && a.callId().equals(ctx.callId()) ? Optional.of(a) : Optional.empty();
+    }
+
+    private final class Answering implements AnsweringTurn {
+        private final CallId callId;
+        private final Turn turn;
+        private final long seq;
+        private final Progress progress;
+
+        Answering(CallId callId, Turn turn, long seq, Progress progress) {
+            this.callId = callId;
+            this.turn = turn;
+            this.seq = seq;
+            this.progress = progress;
+        }
+
+        @Override
+        public CallId callId() {
+            return callId;
+        }
+
+        @Override
+        public Turn turn() {
+            return turn;
+        }
+
+        @Override
+        public boolean current() {
+            return !progress.over && clock.millis() <= progress.deadlineMs
+                    && Long.valueOf(seq).equals(newestAnswer.get(callId));
+        }
     }
 
     /**

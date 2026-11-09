@@ -14,8 +14,9 @@ import org.springframework.stereotype.Component;
 /**
  * {@code find_buyers(commodity, quantity?, district?)}: at most two directory buyers for the farmer's crop, best first,
  * each with name, place, listed range (numbers as words) and language, plus a short reason (docs/call-flow.md step 7).
- * The result carries each buyer's {@code buyer_id} for {@code connect_buyer}, never a phone number or phone key. The
- * suggestions are recorded in {@link BuyerConsent}, so only a suggested buyer can be connected.
+ * The result carries each buyer's {@code buyer_id} for {@code ask_connect_buyer} and {@code connect_buyer}, never a
+ * phone number or phone key. The suggestions are recorded in {@link BuyerConsent}, so only a suggested buyer can be
+ * connected. The commodity argument is never echoed: an unknown crop gets a generic answer, a known one our own name.
  */
 @Component
 public class FindBuyersTool implements Tool {
@@ -62,9 +63,16 @@ public class FindBuyersTool implements Tool {
         } catch (IllegalArgumentException e) {
             return ToolResult.error("quantity must be a positive number of quintals.");
         }
-        String crop = directory.commodityName(commodity.get());
-        List<BuyerDirectory.Match> matches = directory.match(commodity.get(), quantity, ToolArgs.text(args, "district"));
-        consent.suggested(ctx.callId(), matches.stream().map(m -> m.buyer().id()).toList());
+        // The commodity text is untrusted (the model's copy of the farmer's words): only our own crop names go back.
+        Optional<String> known = directory.knownCommodity(commodity.get());
+        List<BuyerDirectory.Match> matches = known.isEmpty() ? List.of()
+                : directory.match(known.get(), quantity, ToolArgs.text(args, "district"));
+        consent.suggested(ctx, matches.stream().map(m -> m.buyer().id()).toList());
+        if (known.isEmpty()) {
+            return ToolResult.ok("No buyer in our directory buys that crop yet. Tell the farmer honestly and offer to "
+                    + "call back when one is listed. Do not make up a buyer.");
+        }
+        String crop = known.get();
         if (matches.isEmpty()) {
             return ToolResult.ok("No buyer in our directory buys " + crop + " in that quantity yet. Tell the farmer "
                     + "honestly and offer to call back when one is listed. Do not make up a buyer.");
@@ -83,8 +91,9 @@ public class FindBuyersTool implements Tool {
         }
         // Spelled-out ordinals and prices: the model's text goes to Timbre, which reads digits badly.
         out.append(" Recommend the first. For each, tell the farmer the name, place, listed range and language "
-                + "(never the buyer_id). Then ask: shall I call ").append(matches.get(0).buyer().name())
-                .append(" now? Please say yes or no. Call connect_buyer only after the farmer answers.");
+                + "(never the buyer_id). Then call ask_connect_buyer for the one they want, ")
+                .append(matches.get(0).buyer().name()).append(" unless they say otherwise, and say its question. "
+                        + "Call connect_buyer only after the farmer answers that question.");
         return ToolResult.ok(out.toString());
     }
 

@@ -541,6 +541,70 @@ class LlmAgentBrainTest {
         return second.path("content").asText();
     }
 
+    // ---- the turn being answered, for tools ----------------------------------------------------------------
+
+    @Test
+    void toolsSeeTheTurnBeingAnsweredUntilANewerTurnSupersedesIt() throws Exception {
+        CallContext ctx = BrainFixture.newFarmer(HINDI);
+        List<LlmAgentBrain.AnsweringTurn> seen = new ArrayList<>();
+        List<Boolean> currentBefore = new ArrayList<>();
+        List<Boolean> currentAfterNewer = new ArrayList<>();
+        LlmAgentBrain[] brain = new LlmAgentBrain[1];
+        com.example.g_one.core.Tool probe = new com.example.g_one.core.Tool() {
+            @Override
+            public String name() {
+                return "probe";
+            }
+
+            @Override
+            public String description() {
+                return "test probe";
+            }
+
+            @Override
+            public JsonNode jsonSchema() {
+                return json("{\"type\":\"object\"}");
+            }
+
+            @Override
+            public com.example.g_one.core.ToolResult invoke(JsonNode args, CallContext c) {
+                LlmAgentBrain.AnsweringTurn a = LlmAgentBrain.answering(c).orElseThrow();
+                seen.add(a);
+                currentBefore.add(a.current());
+                assertThat(LlmAgentBrain.answering(BrainFixture.newFarmer(HINDI))).isEmpty(); // another call
+                Thread newer = new Thread(() -> brain[0].respond(c, List.of(), said(c, "second")));
+                newer.start();
+                try {
+                    newer.join(5_000);
+                } catch (InterruptedException e) {
+                    throw new AssertionError(e);
+                }
+                currentAfterNewer.add(a.current());
+                return com.example.g_one.core.ToolResult.ok("done");
+            }
+        };
+        BrainFixture.ScriptedChat chat = new BrainFixture.ScriptedChat(f.props, req -> {
+            ChatMessage lastMessage = last(req.messages());
+            if ("user".equals(lastMessage.role()) && "first".equals(lastMessage.content())) {
+                return new ChatReply("", List.of(new ToolCall("call_1", "probe", "{}")), "tool_calls");
+            }
+            return new ChatReply("ठीक है।", List.of(), "stop");
+        });
+        brain[0] = new LlmAgentBrain(chat, List.of(probe), f.gate, f.lines, f.fallback, f.registry, f.bus,
+                BrainFixture.JSON, BrainFixture.CLOCK);
+        com.example.g_one.core.Turn first = said(ctx, "first");
+
+        brain[0].respond(ctx, List.of(), first);
+
+        assertThat(seen).hasSize(1);
+        assertThat(seen.get(0).turn()).isEqualTo(first);
+        assertThat(seen.get(0).callId()).isEqualTo(ctx.callId());
+        assertThat(currentBefore).containsExactly(true);
+        assertThat(currentAfterNewer).containsExactly(false);
+        assertThat(seen.get(0).current()).isFalse(); // the answer is over
+        assertThat(LlmAgentBrain.answering(ctx)).isEmpty(); // not inside a respond
+    }
+
     private static JsonNode json(String text) {
         try {
             return BrainFixture.JSON.readTree(text);

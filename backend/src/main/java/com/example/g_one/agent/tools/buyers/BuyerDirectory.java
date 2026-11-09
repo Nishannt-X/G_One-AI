@@ -72,6 +72,19 @@ public class BuyerDirectory {
     }
 
     /**
+     * Our own name for the crop the farmer said: the AGMARKNET name, or a crop a directory buyer lists. Empty for
+     * anything else, so the farmer's (or the model's) words are never repeated back as a crop name.
+     */
+    public Optional<String> knownCommodity(String spoken) {
+        if (spoken == null) return Optional.empty();
+        Optional<String> catalogName = catalog.commodity(spoken);
+        if (catalogName.isPresent()) return catalogName;
+        String k = key(spoken);
+        if (k.isEmpty()) return Optional.empty();
+        return byId.values().stream().flatMap(b -> b.crops().stream()).filter(c -> key(c).equals(k)).findFirst();
+    }
+
+    /**
      * At most {@value #MAX_SUGGESTIONS} buyers for the crop, best first.
      *
      * @param quantity quintals, if the farmer said
@@ -84,10 +97,10 @@ public class BuyerDirectory {
         for (Buyer b : byId.values()) {
             if (b.crops().stream().map(BuyerDirectory::key).noneMatch(crop::equals)) continue;
             if (quantity.isPresent() && quantity.getAsDouble() < b.minQuintals()) continue;
-            boolean inArea = area.isPresent()
-                    && b.areas().stream().map(BuyerDirectory::key).anyMatch(area.get()::equals);
+            Optional<String> inArea = area.flatMap(
+                    a -> b.areas().stream().filter(x -> key(x).equals(a)).findFirst());
             boolean fits = quantity.isPresent() && quantity.getAsDouble() <= b.maxQuintals();
-            out.add(new Match(b, inArea, fits, reason(b, inArea, fits, quantity, district)));
+            out.add(new Match(b, inArea.isPresent(), fits, reason(b, inArea, fits, quantity)));
         }
         out.sort(Comparator.comparingInt((Match m) -> -score(m))
                 .thenComparingInt(m -> -m.buyer().maxPrice())
@@ -99,10 +112,10 @@ public class BuyerDirectory {
         return (m.inArea() ? AREA_SCORE : 0) + (m.quantityFits() ? QUANTITY_SCORE : 0);
     }
 
-    private static String reason(Buyer b, boolean inArea, boolean fits, OptionalDouble quantity,
-                                 Optional<String> district) {
+    /** Uses only directory text (the matched area as the directory spells it), never the caller's words. */
+    private static String reason(Buyer b, Optional<String> area, boolean fits, OptionalDouble quantity) {
         List<String> parts = new ArrayList<>();
-        parts.add(inArea ? "collects from " + district.orElseThrow().strip() : "based in " + b.place());
+        parts.add(area.map(a -> "collects from " + a).orElse("based in " + b.place()));
         if (quantity.isPresent()) parts.add(fits ? "takes lots of that size" : "takes only part of that quantity");
         return String.join(", ", parts);
     }
